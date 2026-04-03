@@ -1,4 +1,4 @@
-name: Build Signed APK (Perfect Sign)
+name: Build Signed APK (Industrial Grade)
 
 on:
   push:
@@ -30,79 +30,101 @@ jobs:
       - name: Build Web App
         run: npm run build
 
-      - name: Setup Android Project
+      - name: Setup Android Project Environment
         run: |
           if [ ! -d "android" ]; then
             npx cap add android
           fi
+          # Fix SDK Versions in the standard Capacitor location
+          VARS_GRADLE="android/variables.gradle"
+          if [ -f "$VARS_GRADLE" ]; then
+            sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 34/g' $VARS_GRADLE
+            sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 34/g' $VARS_GRADLE
+          fi
           npx cap sync android
 
-      - name: Prepare Signing Key
+      - name: Setup Signing Assets & Properties
         run: |
+          # 1. Handle Keystore
           if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
-            echo "PW=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
-            echo "AL=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+            ST_PASS="${{ secrets.KEYSTORE_PASSWORD }}"
+            K_PASS="${{ secrets.KEY_PASSWORD }}"
+            K_ALIAS="${{ secrets.KEY_ALIAS }}"
           else
             keytool -genkeypair -v -keystore android/app/release.jks -alias sanctuary -keyalg RSA -keysize 2048 -validity 10000 -storepass sanctuary123 -keypass sanctuary123 -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=State, C=US"
-            echo "PW=sanctuary123" >> $GITHUB_ENV
-            echo "AL=sanctuary" >> $GITHUB_ENV
+            ST_PASS="sanctuary123"
+            K_PASS="sanctuary123"
+            K_ALIAS="sanctuary"
           fi
 
-      - name: Surgical Gradle Injection
+          # 2. Inject Secrets into gradle.properties (The Proper Way)
+          PROP_FILE="android/gradle.properties"
+          echo "MY_ALIAS=$K_ALIAS" >> $PROP_FILE
+          echo "MY_STORE_PASS=$ST_PASS" >> $PROP_FILE
+          echo "MY_KEY_PASS=$K_PASS" >> $PROP_FILE
+
+      - name: Configure App Gradle (Stable Template)
         run: |
           APP_GRADLE="android/app/build.gradle"
           python3 -c "
-          import os, re
-          
-          pw = os.environ.get('PW', 'sanctuary123')
-          alias = os.environ.get('AL', 'sanctuary').strip()
+          import re
           
           with open('$APP_GRADLE', 'r') as f:
-              content = f.read()
-
-          # 1. Force SDK Versions (Fixes compileSdkVersion error)
-          content = re.sub(r'compileSdkVersion\s+\d+', 'compileSdkVersion 34', content)
-          content = re.sub(r'targetSdkVersion\s+\d+', 'targetSdkVersion 34', content)
+              lines = f.readlines()
           
-          if 'signingConfigs' not in content:
-              # Create the signing config block
-              signing_block = f'''
-    signingConfigs {{
-        release {{
-            storeFile file(\"release.jks\")
-            storePassword \"{pw}\"
-            keyAlias \"{alias}\"
-            keyPassword \"{pw}\"
-        }}
-    }}
-'''
-              # Inject it right at the start of the android block
-              content = content.replace('android {', 'android {' + signing_block)
+          new_lines = []
+          skip_signing = False
+          
+          # Clean existing signingBlocks to prevent duplication
+          for line in lines:
+              if 'signingConfigs {' in line: skip_signing = True
+              if not skip_signing: new_lines.append(line)
+              if skip_signing and '}' in line and line.strip() == '}':
+                  # Check if we are at the end of a block
+                  # Simple heuristic for capacitor's default structure
+                  skip_signing = False
 
-          # 2. Assign the signing config to the release build
+          content = ''.join(new_lines)
+          
+          # Professional Signing Injection
+          signing_code = '''
+    signingConfigs {
+        release {
+            storeFile file('release.jks')
+            storePassword MY_STORE_PASS
+            keyAlias MY_ALIAS
+            keyPassword MY_KEY_PASS
+        }
+    }
+'''
+          # Force inject SDK versions in case they are missing locally
+          content = re.sub(r'compileSdkVersion\s+\d+', 'compileSdkVersion 34', content)
+          
+          # Inject at the start of android block
+          content = content.replace('android {', 'android {' + signing_code)
+          
+          # Ensure release build uses it
           if 'signingConfig signingConfigs.release' not in content:
               content = content.replace('buildTypes {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release')
-
-          # 3. Auto-increment version code
+          
+          # Dynamic Versioning
+          import os
           run_num = os.environ.get('GITHUB_RUN_NUMBER', '1')
           content = re.sub(r'versionCode \d+', f'versionCode {run_num}', content)
-
+          
           with open('$APP_GRADLE', 'w') as f:
               f.write(content)
           "
-        env:
-          PW: ${{ env.PW }}
-          AL: ${{ env.AL }}
 
-      - name: Build Final APK
+      - name: Final Build Execution
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Upload Artifact
+      - name: Deploy Secure Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Mihrab-V${{ github.run_number }}
+          name: Mihrab-V${{ github.run_number }}-Signed
           path: android/app/build/outputs/apk/release/app-release.apk
