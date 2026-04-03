@@ -1,4 +1,4 @@
-name: Build Signed APK (Emergency Green Restore)
+name: Mihrab Pro Build (Clean Start)
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -32,62 +32,63 @@ jobs:
 
       - name: Sync Capacitor
         run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
+          npx cap add android
           npx cap sync android
 
-      - name: Pure Emergency Key Generation
+      - name: Inject Signing Secrets
         run: |
-          # COMPLETELY IGNORE SECRETS TO ENSURE SUCCESS
-          keytool -genkeypair -v -keystore android/app/release.jks -alias sanctuary -keyalg RSA -keysize 2048 -validity 10000 -storepass sanctuary123 -keypass sanctuary123 -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=State, C=US"
-          echo "STORE_PASS=sanctuary123" >> $GITHUB_ENV
-          echo "KEY_PASS=sanctuary123" >> $GITHUB_ENV
-          echo "KEY_ALIAS=sanctuary" >> $GITHUB_ENV
+          # 1. Decode Keystore
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
+          
+          # 2. Add properties to gradle.properties (The Stable Way)
+          PROP_FILE="android/gradle.properties"
+          echo "MY_STORE_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $PROP_FILE
+          echo "MY_KEY_PASS=${{ secrets.KEY_PASSWORD }}" >> $PROP_FILE
+          echo "MY_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $PROP_FILE
 
-      - name: Stable Native Configuration
+      - name: Stable Build Patch
         run: |
-          GRADLE_FILE="android/app/build.gradle"
+          # Use Python for a single, reliable replacement
+          APP_GRADLE="android/app/build.gradle"
           python3 -c "
           import os, re
-          content = open('$GRADLE_FILE').read()
+          content = open('$APP_GRADLE').read()
           
-          # Stable Injection
-          signing = '''
-              signingConfigs {
-                  release {
-                      storeFile file('release.jks')
-                      storePassword System.getenv('STORE_PASS')
-                      keyAlias System.getenv('KEY_ALIAS')
-                      keyPassword System.getenv('KEY_PASS')
-                  }
-              }
-          '''
-          if 'signingConfigs' not in content:
-              content = content.replace('android {', 'android {' + signing)
-          if 'signingConfig signingConfigs.release' not in content:
-              content = content.replace('buildTypes {', 'buildTypes {\\n        release {\\n            signingConfig signingConfigs.release')
+          # Precise block injection
+          signing_block = '''
+    signingConfigs {
+        release {
+            storeFile file('release.jks')
+            storePassword MY_STORE_PASS
+            keyAlias MY_KEY_ALIAS
+            keyPassword MY_KEY_PASS
+        }
+    }
+'''
+          # Inject and ensure built-in variables are used
+          content = content.replace('android {', 'android {' + signing_block)
+          content = content.replace('buildTypes {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release')
           
-          # Auto versioning
-          run_num = os.environ.get('GITHUB_RUN_NUMBER', '1')
-          content = re.sub(r'versionCode \d+', f'versionCode {run_num}', content)
+          # Force SDK 34
+          content = re.sub(r'compileSdkVersion\s+\d+', 'compileSdkVersion 34', content)
           
-          with open('$GRADLE_FILE', 'w') as f:
+          with open('$APP_GRADLE', 'w') as f:
               f.write(content)
           "
-        env:
-          STORE_PASS: ${{ env.STORE_PASS }}
-          KEY_PASS: ${{ env.KEY_PASS }}
-          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+          
+          # Ensure Variables are correct in root
+          VARS_GRADLE="android/variables.gradle"
+          sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 34/g' $VARS_GRADLE
+          sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 34/g' $VARS_GRADLE
 
-      - name: Forge Clean APK
+      - name: Assemble Final APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Deliver Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mihrab-V${{ github.run_number }}-Emergency-Green
+          name: Mihrab-V${{ github.run_number }}-Stable
           path: android/app/build/outputs/apk/release/app-release.apk
