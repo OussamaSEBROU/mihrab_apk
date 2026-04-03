@@ -1,4 +1,4 @@
-name: Build Signed APK (Certified Engineering)
+name: Build Signed APK (Restore Working Version)
 
 on:
   push:
@@ -30,98 +30,73 @@ jobs:
       - name: Build Web App
         run: npm run build
 
-      - name: Initialize Android
+      - name: Sync Capacitor
         run: |
-          npx cap add android
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
           npx cap sync android
 
-      - name: Master Stroke - Generate Perfect Gradle
-        env:
-          MY_RUN_NUMBER: ${{ github.run_number }}
+      - name: Manage Signing Key
         run: |
-          # 1. Force SDK 34 in variables.gradle
-          cat <<EOF > android/variables.gradle
-          ext {
-              minSdkVersion = 22
-              compileSdkVersion = 34
-              targetSdkVersion = 34
-              androidxActivityVersion = '1.8.0'
-              androidxAppCompatVersion = '1.6.1'
-              androidxCoordinatorLayoutVersion = '1.2.0'
-              androidxCoreVersion = '1.12.0'
-              androidxFragmentVersion = '1.6.2'
-              junitVersion = '4.13.2'
-              androidxJunitVersion = '1.1.5'
-              androidxEspressoCoreVersion = '3.5.1'
-              cordovaAndroidVersion = '10.1.1'
-          }
-          EOF
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "✅ Using your real Secrets."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
+            echo "STORE_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_PASS=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+          else
+            echo "⚠️ No Secret found. Generating a temporary key."
+            keytool -genkeypair -v -keystore android/app/release.jks -alias sanctuary -keyalg RSA -keysize 2048 -validity 10000 -storepass sanctuary123 -keypass sanctuary123 -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=State, C=US"
+            echo "STORE_PASS=sanctuary123" >> $GITHUB_ENV
+            echo "KEY_PASS=sanctuary123" >> $GITHUB_ENV
+            echo "KEY_ALIAS=sanctuary" >> $GITHUB_ENV
+          fi
 
-          # 2. Write a static, perfect build.gradle
-          cat <<EOF > android/app/build.gradle
-          apply plugin: 'com.android.application'
-
-          android {
-              compileSdkVersion rootProject.ext.compileSdkVersion
-              defaultConfig {
-                  applicationId "com.sanctuary.reader.simple"
-                  minSdkVersion rootProject.ext.minSdkVersion
-                  targetSdkVersion rootProject.ext.targetSdkVersion
-                  versionCode $MY_RUN_NUMBER
-                  versionName "1.0.$MY_RUN_NUMBER"
-                  testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-              }
-              
+      - name: Configure Gradle (Restore Logic From 124)
+        run: |
+          GRADLE_FILE="android/app/build.gradle"
+          python3 -c "
+          import os, re
+          content = open('$GRADLE_FILE').read()
+          
+          # Inject Signing Config safely
+          signing = '''
               signingConfigs {
                   release {
                       storeFile file('release.jks')
-                      storePassword System.getenv("ST_PASS")
-                      keyAlias System.getenv("K_ALIAS")
-                      keyPassword System.getenv("K_PASS")
+                      storePassword System.getenv('STORE_PASS')
+                      keyAlias System.getenv('KEY_ALIAS')
+                      keyPassword System.getenv('KEY_PASS')
                   }
               }
+          '''
+          if 'signingConfigs' not in content:
+              content = content.replace('android {', 'android {' + signing)
+          
+          if 'signingConfig signingConfigs.release' not in content:
+              content = content.replace('buildTypes {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release')
+          
+          # Auto Versioning
+          run_num = os.environ.get('GITHUB_RUN_NUMBER', '1')
+          content = re.sub(r'versionCode \d+', f'versionCode {run_num}', content)
+          
+          with open('$GRADLE_FILE', 'w') as f:
+              f.write(content)
+          "
+        env:
+          STORE_PASS: ${{ env.STORE_PASS }}
+          KEY_PASS: ${{ env.KEY_PASS }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
 
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.release
-                      minifyEnabled false
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                  }
-              }
-          }
-
-          dependencies {
-              implementation fileTree(dir: 'libs', include: ['*.jar'])
-              implementation "androidx.appcompat:appcompat:\$rootProject.ext.androidxAppCompatVersion"
-              implementation project(':capacitor-android')
-              implementation project(':capacitor-cordova-android-plugins')
-          }
-          EOF
-
-      - name: Prep Keystore
-        run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
-            echo "ST_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
-            echo "K_PASS=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
-            echo "K_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
-          else
-            echo "⚠️ ERROR: Secrets missing but required for this build stage!"
-            exit 1
-          fi
-
-      - name: Build APK (Final Action)
+      - name: Assemble Release APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease
-        env:
-          ST_PASS: ${{ env.ST_PASS }}
-          K_PASS: ${{ env.K_PASS }}
-          K_ALIAS: ${{ env.K_ALIAS }}
 
-      - name: Upload Perfect APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mihrab-V${{ github.run_number }}-Production
+          name: Mihrab-Signed-APK
           path: android/app/build/outputs/apk/release/app-release.apk
