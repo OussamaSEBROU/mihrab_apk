@@ -1,0 +1,165 @@
+name: Build & Sign Android APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# ─────────────────────────────────────────────────────────────
+#  REQUIRED GITHUB SECRETS (Settings → Secrets → Actions):
+#
+#  KEYSTORE_BASE64    — base64-encoded .jks keystore file
+#  KEYSTORE_PASSWORD  — keystore password
+#  KEY_ALIAS          — signing key alias
+#  KEY_PASSWORD       — key password
+#
+#  Generate once locally:
+#    keytool -genkey -v -keystore sanctuary-release.jks \
+#      -keyalg RSA -keysize 2048 -validity 10000 \
+#      -alias sanctuary -storepass <password> -keypass <password> \
+#      -dname "CN=Sanctuary,OU=Dev,O=Sanctuary,L=City,S=State,C=US"
+#
+#    base64 -w 0 sanctuary-release.jks > keystore.b64
+#    # Copy contents of keystore.b64 → KEYSTORE_BASE64 secret
+# ─────────────────────────────────────────────────────────────
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Web App
+        run: npm run build
+
+      - name: Initialize Capacitor Android
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Generate Mobile Assets
+        run: npm run mobile:assets
+
+      # ── PERSISTENT SIGNING KEY (from GitHub Secrets) ──
+      - name: Decode Keystore
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/sanctuary-release.jks
+            echo "KEYSTORE_FOUND=true" >> $GITHUB_ENV
+          else
+            echo "⚠ No KEYSTORE_BASE64 secret found. Building debug APK with fresh keystore."
+            echo "KEYSTORE_FOUND=false" >> $GITHUB_ENV
+            keytool -genkey -v -keystore android/app/sanctuary-release.jks \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias sanctuary -storepass sanctuary123 -keypass sanctuary123 \
+              -dname "CN=Sanctuary,OU=Dev,O=Sanctuary,L=City,S=State,C=US"
+          fi
+
+      # ── CONFIGURE GRADLE: Signing + Auto-Versioning ──
+      - name: Configure Signing and Versioning
+        env:
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'sanctuary123' }}
+          KEY_ALIAS_VAL: ${{ secrets.KEY_ALIAS || 'sanctuary' }}
+          KEY_PASSWORD_VAL: ${{ secrets.KEY_PASSWORD || 'sanctuary123' }}
+        run: |
+          GRADLE_FILE="android/app/build.gradle"
+
+          python3 -c "
+          import os, re
+
+          gradle = open('$GRADLE_FILE').read()
+          run_number = os.getenv('GITHUB_RUN_NUMBER', '1')
+          store_pass = os.getenv('STORE_PASSWORD')
+          key_alias = os.getenv('KEY_ALIAS_VAL')
+          key_pass = os.getenv('KEY_PASSWORD_VAL')
+
+          # Inject signingConfigs block if not present
+          signing_config = '''
+              signingConfigs {
+                  release {
+                      storeFile file('sanctuary-release.jks')
+                      storePassword '%s'
+                      keyAlias '%s'
+                      keyPassword '%s'
+                  }
+              }
+          ''' % (store_pass, key_alias, key_pass)
+
+          if 'signingConfigs' not in gradle:
+              gradle = gradle.replace('android {', 'android {' + signing_config)
+
+          # Apply signing to BOTH release and debug builds (same key = seamless updates)
+          if 'signingConfig signingConfigs.release' not in gradle:
+              gradle = gradle.replace(
+                  'buildTypes {',
+                  '''buildTypes {
+              release {
+                  signingConfig signingConfigs.release
+                  minifyEnabled false
+              }
+              debug {
+                  signingConfig signingConfigs.release
+              }'''
+              )
+
+          # Auto-increment versionCode from GitHub run number
+          gradle = re.sub(r'versionCode \d+', f'versionCode {run_number}', gradle)
+
+          # Sync versionName from package.json
+          import json
+          try:
+              pkg = json.load(open('package.json'))
+              version = pkg.get('version', '1.0.0')
+              gradle = re.sub(r\"versionName \\\"[^\\\"]*\\\"\", f'versionName \\\"{version}\\\"', gradle)
+          except: pass
+
+          with open('$GRADLE_FILE', 'w') as f:
+              f.write(gradle)
+          "
+
+      # ── BUILD SIGNED RELEASE APK ──
+      - name: Build Release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanctuary-release-v${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      # ── ALSO BUILD DEBUG for testing ──
+      - name: Build Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanctuary-debug-v${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
