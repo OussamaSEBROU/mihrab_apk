@@ -1,4 +1,4 @@
-name: Build Signed APK (Fail-Safe Engineer)
+name: Build Signed APK (Certified Engineering)
 
 on:
   push:
@@ -36,6 +36,8 @@ jobs:
           npx cap sync android
 
       - name: Master Stroke - Generate Perfect Gradle
+        env:
+          MY_RUN_NUMBER: ${{ github.run_number }}
         run: |
           # 1. Force SDK 34 in variables.gradle
           cat <<EOF > android/variables.gradle
@@ -55,8 +57,7 @@ jobs:
           }
           EOF
 
-          # 2. Write a static, perfect build.gradle that ignores local mess
-          # We use environment variables for passwords safely
+          # 2. Write a static, perfect build.gradle
           cat <<EOF > android/app/build.gradle
           apply plugin: 'com.android.application'
 
@@ -66,17 +67,17 @@ jobs:
                   applicationId "com.sanctuary.reader.simple"
                   minSdkVersion rootProject.ext.minSdkVersion
                   targetSdkVersion rootProject.ext.targetSdkVersion
-                  versionCode \${{ github.run_number }}
-                  versionName "1.0.\${{ github.run_number }}"
+                  versionCode $MY_RUN_NUMBER
+                  versionName "1.0.$MY_RUN_NUMBER"
                   testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
               }
               
               signingConfigs {
                   release {
                       storeFile file('release.jks')
-                      storePassword System.getenv("ST_PASS") ?: 'sanctuary123'
-                      keyAlias System.getenv("K_ALIAS") ?: 'sanctuary'
-                      keyPassword System.getenv("K_PASS") ?: 'sanctuary123'
+                      storePassword System.getenv("ST_PASS")
+                      keyAlias System.getenv("K_ALIAS")
+                      keyPassword System.getenv("K_PASS")
                   }
               }
 
@@ -95,15 +96,6 @@ jobs:
               implementation project(':capacitor-android')
               implementation project(':capacitor-cordova-android-plugins')
           }
-
-          try {
-              def servicesJSON = file('google-services.json')
-              if (servicesJSON.text) {
-                  apply plugin: 'com.google.gms.google-services'
-              }
-          } catch(Exception e) {
-              logger.info("google-services.json not found, skipping plugin registration")
-          }
           EOF
 
       - name: Prep Keystore
@@ -114,13 +106,11 @@ jobs:
             echo "K_PASS=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
             echo "K_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
           else
-            keytool -genkeypair -v -keystore android/app/release.jks -alias sanctuary -keyalg RSA -keysize 2048 -validity 10000 -storepass sanctuary123 -keypass sanctuary123 -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=State, C=US"
-            echo "ST_PASS=sanctuary123" >> $GITHUB_ENV
-            echo "K_PASS=sanctuary123" >> $GITHUB_ENV
-            echo "K_ALIAS=sanctuary" >> $GITHUB_ENV
+            echo "⚠️ ERROR: Secrets missing but required for this build stage!"
+            exit 1
           fi
 
-      - name: Build APK
+      - name: Build APK (Final Action)
         run: |
           cd android
           chmod +x gradlew
@@ -130,8 +120,8 @@ jobs:
           K_PASS: ${{ env.K_PASS }}
           K_ALIAS: ${{ env.K_ALIAS }}
 
-      - name: Upload APK
+      - name: Upload Perfect APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mihrab-V${{ github.run_number }}-Perfect
+          name: Mihrab-V${{ github.run_number }}-Production
           path: android/app/build/outputs/apk/release/app-release.apk
