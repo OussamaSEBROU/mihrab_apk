@@ -1,9 +1,7 @@
-name: Build Signed APK (Smart Sign)
+name: Build Signed APK (Ultra Smart Sign)
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
     branches: [ main ]
 
 jobs:
@@ -32,74 +30,89 @@ jobs:
       - name: Build Web App
         run: npm run build
 
-      - name: Sync Capacitor
+      - name: Setup Android Project
         run: |
           if [ ! -d "android" ]; then
             npx cap add android
+          fi
+          # Ensure a basic build.gradle exists with SDK versions
+          ROOT_GRADLE="android/build.gradle"
+          if [ -f "$ROOT_GRADLE" ]; then
+            sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 34/g' $ROOT_GRADLE || true
+            sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 34/g' $ROOT_GRADLE || true
           fi
           npx cap sync android
 
       - name: Manage Signing Key
         run: |
+          # Create keystore from secret or generate emergency one
           if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "✅ Using provided Keystore Secret."
             echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
-            echo "STORE_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
-            echo "KEY_PASS=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
-            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+            echo "ST_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "K_PASS=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+            echo "K_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
           else
-            echo "⚠️ No Secret found. Generating a fresh Emergency Keystore for this user."
             keytool -genkeypair -v -keystore android/app/release.jks -alias sanctuary -keyalg RSA -keysize 2048 -validity 10000 -storepass sanctuary123 -keypass sanctuary123 -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=State, C=US"
-            echo "STORE_PASS=sanctuary123" >> $GITHUB_ENV
-            echo "KEY_PASS=sanctuary123" >> $GITHUB_ENV
-            echo "KEY_ALIAS=sanctuary" >> $GITHUB_ENV
+            echo "ST_PASS=sanctuary123" >> $GITHUB_ENV
+            echo "K_PASS=sanctuary123" >> $GITHUB_ENV
+            echo "K_ALIAS=sanctuary" >> $GITHUB_ENV
           fi
 
-      - name: Configure Gradle
+      - name: Inject Hardware-Level Gradle Config
         run: |
-          GRADLE_FILE="android/app/build.gradle"
+          # Use Python to surgically modify build.gradle without breaking it
+          APP_GRADLE="android/app/build.gradle"
           python3 -c "
           import os, re
-          content = open('$GRADLE_FILE').read()
           
-          # Inject Signing Config
-          signing = '''
-              signingConfigs {
-                  release {
-                      storeFile file('release.jks')
-                      storePassword os.environ.get('STORE_PASS', 'sanctuary123')
-                      keyAlias os.environ.get('KEY_ALIAS', 'sanctuary')
-                      keyPassword os.environ.get('KEY_PASS', 'sanctuary123')
-                  }
-              }
+          st_pass = os.environ.get('ST_PASS', 'sanctuary123')
+          k_pass = os.environ.get('K_PASS', 'sanctuary123')
+          k_alias = os.environ.get('K_ALIAS', 'sanctuary')
+          
+          content = open('$APP_GRADLE').read()
+          
+          # 1. Ensure compileSdk is defined locally if missing from root
+          if 'compileSdk ' not in content and 'compileSdkVersion' not in content:
+              content = content.replace('android {', 'android {\n    compileSdk 34')
+          
+          # 2. Inject Signing Config with hardcoded values to avoid 'os' property issues
+          signing_config = f'''
+              signingConfigs {{
+                  release {{
+                      storeFile file(\"release.jks\")
+                      storePassword \"{st_pass}\"
+                      keyAlias \"{k_alias}\"
+                      keyPassword \"{k_pass}\"
+                  }}
+              }}
           '''
           if 'signingConfigs' not in content:
-              content = content.replace('android {', 'android {' + signing)
+              content = content.replace('android {', 'android {' + signing_config)
           
-          # Apply to Release Build
+          # 3. Enable Signing in Release Build
           if 'signingConfig signingConfigs.release' not in content:
-              content = content.replace('buildTypes {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release\n            minifyEnabled false\n        }')
+              content = content.replace('buildTypes {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release')
           
-          # Auto Versioning
+          # 4. Auto-Version based on build number
           run_num = os.environ.get('GITHUB_RUN_NUMBER', '1')
           content = re.sub(r'versionCode \d+', f'versionCode {run_num}', content)
           
-          with open('$GRADLE_FILE', 'w') as f:
+          with open('$APP_GRADLE', 'w') as f:
               f.write(content)
-          " env
+          "
         env:
-          STORE_PASS: ${{ env.STORE_PASS }}
-          KEY_PASS: ${{ env.KEY_PASS }}
-          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+          ST_PASS: ${{ env.ST_PASS }}
+          K_PASS: ${{ env.K_PASS }}
+          K_ALIAS: ${{ env.K_ALIAS }}
 
-      - name: Assemble Release APK
+      - name: Build APK with Gradle
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Upload APK
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Mihrab-Signed-APK-v${{ github.run_number }}
+          name: Mihrab-V${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
