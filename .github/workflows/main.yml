@@ -1,7 +1,9 @@
-name: Mihrab Pro Build (Clean Start)
+name: Build Android APK (Hybrid Stable)
 
 on:
   push:
+    branches: [ main ]
+  pull_request:
     branches: [ main ]
 
 jobs:
@@ -18,7 +20,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -30,65 +32,75 @@ jobs:
       - name: Build Web App
         run: npm run build
 
+      - name: Initialize Capacitor Android
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+
       - name: Sync Capacitor
-        run: |
-          npx cap add android
-          npx cap sync android
+        run: npx cap sync android
 
-      - name: Inject Signing Secrets
+      - name: Generate Mobile Assets
+        run: npm run mobile:assets || echo "No assets script found, skipping"
+
+      # ── الإصلاح النهائي: دمج كودك الأصلي مع أسرارك الحقيقية ──
+      - name: Configure Stable Signing and Versioning
+        env:
+          K_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          K_PASS: ${{ secrets.KEY_PASSWORD }}
+          K_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ST_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          # 1. Decode Keystore
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
+          GRADLE_FILE="android/app/build.gradle"
           
-          # 2. Add properties to gradle.properties (The Stable Way)
-          PROP_FILE="android/gradle.properties"
-          echo "MY_STORE_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> $PROP_FILE
-          echo "MY_KEY_PASS=${{ secrets.KEY_PASSWORD }}" >> $PROP_FILE
-          echo "MY_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $PROP_FILE
-
-      - name: Stable Build Patch
-        run: |
-          # Use Python for a single, reliable replacement
-          APP_GRADLE="android/app/build.gradle"
+          # 1. فك تشفير مفتاحك الحقيقي ووضعه في مكانه
+          echo "$K_BASE64" | base64 -d > android/app/my-release-key.jks
+          
+          # 2. حقن إعدادات التوقيع (نفس منطق كودك الأصلي تماماً)
           python3 -c "
-          import os, re
-          content = open('$APP_GRADLE').read()
+          import sys, os, re
           
-          # Precise block injection
-          signing_block = '''
-    signingConfigs {
-        release {
-            storeFile file('release.jks')
-            storePassword MY_STORE_PASS
-            keyAlias MY_KEY_ALIAS
-            keyPassword MY_KEY_PASS
-        }
-    }
-'''
-          # Inject and ensure built-in variables are used
-          content = content.replace('android {', 'android {' + signing_block)
-          content = content.replace('buildTypes {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release')
+          # جلب القيم الحقيقية من الـ Secrets
+          k_pass = os.environ.get('K_PASS')
+          st_pass = os.environ.get('ST_PASS')
+          k_alias = os.environ.get('K_ALIAS')
           
-          # Force SDK 34
-          content = re.sub(r'compileSdkVersion\s+\d+', 'compileSdkVersion 34', content)
+          content = open('$GRADLE_FILE').read()
           
-          with open('$APP_GRADLE', 'w') as f:
+          signing_config = f'''
+              signingConfigs {{
+                  release {{
+                      storeFile file('my-release-key.jks')
+                      storePassword \"{st_pass}\"
+                      keyAlias \"{k_alias}\"
+                      keyPassword \"{k_pass}\"
+                  }}
+              }}
+          '''
+          
+          if 'signingConfigs' not in content:
+              content = content.replace('android {', 'android {' + signing_config)
+          
+          # ربط التوقيع بالـ Debug والـ Release لضمان قبول التحديث دائماً (كودك الأصلي)
+          content = content.replace('buildTypes {', 'buildTypes {\\n        release {\\n            signingConfig signingConfigs.release\\n        }\\n        debug {\\n            signingConfig signingConfigs.release\\n        }')
+          
+          # رفع رقم الإصدار (versionCode) تلقائياً
+          run_number = os.environ.get('GITHUB_RUN_NUMBER', '1')
+          content = re.sub(r'versionCode \d+', f'versionCode {run_number}', content)
+          
+          with open('$GRADLE_FILE', 'w') as f:
               f.write(content)
           "
-          
-          # Ensure Variables are correct in root
-          VARS_GRADLE="android/variables.gradle"
-          sed -i 's/compileSdkVersion = [0-9]\+/compileSdkVersion = 34/g' $VARS_GRADLE
-          sed -i 's/targetSdkVersion = [0-9]\+/targetSdkVersion = 34/g' $VARS_GRADLE
 
-      - name: Assemble Final APK
+      - name: Build Android APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleDebug
 
-      - name: Upload APK
+      - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mihrab-V${{ github.run_number }}-Stable
-          path: android/app/build/outputs/apk/release/app-release.apk
+          name: mihrab-stable-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
