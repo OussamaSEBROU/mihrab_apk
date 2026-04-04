@@ -162,6 +162,7 @@ export const translations = {
     loadingExportTitle: 'Crafting Your Archive',
     loadingImportTitle: 'Restoring Knowledge',
     loadingCommunityQuote: 'Share your readings in the reading community and build a strong knowledge ecosystem',
+    sharingIntellectualNote: 'Note: Sharing includes all your intellectual explorations, marginalia, and scholarly annotations, preserving the integrity of your cognitive journey.',
   },
   ar: {
     title: 'المِحْرابْ',
@@ -326,5 +327,6 @@ export const translations = {
     loadingExportTitle: 'جاري صياغة الأرشيف',
     loadingImportTitle: 'استعادة المعرفة',
     loadingCommunityQuote: 'شارك قراءاتك في المجتمع القرائي وكونوا منظومة معرفية متينة',
+    sharingIntellectualNote: 'تنبيه: ستتم المشاركة بكافة تعليقاتك الفكرية وملاحظاتك الهامشية وتهميشاتك الخاصة، حفظاً لتمام الفائدة وتخليداً لرحلتك المعرفية داخل الكتاب.',
   }
 };
