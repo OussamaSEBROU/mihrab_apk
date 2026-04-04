@@ -17,12 +17,9 @@ import {
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import Peer from 'simple-peer';
-
 declare const pdfjsLib: any;
-
 const MotionDiv = motion.div as any;
 const MotionHeader = motion.header as any;
-
 interface ReaderProps {
   book: Book;
   lang: Language;
@@ -33,7 +30,6 @@ interface ReaderProps {
   roomId?: string | null;
   roomData?: any;
 }
-
 interface RoomMember {
   id: string;
   name: string;
@@ -41,39 +37,31 @@ interface RoomMember {
   isMicActive?: boolean;
   isHandRaised?: boolean;
 }
-
 interface VoiceSignalPayload {
   from: string;
   signal: any;
 }
-
 interface MemberMovedPayload {
   id: string;
   page: number;
 }
-
 interface MemberCursorPayload {
   id: string;
   cursor: { x: number, y: number };
 }
-
 interface NewReactionPayload {
   id: string;
   reaction: string;
 }
-
 interface MicStatusPayload {
   id: string;
   active: boolean;
 }
-
 interface HandRaisedPayload {
   id: string;
   raised: boolean;
 }
-
 type Tool = 'view' | 'highlight' | 'underline' | 'box' | 'note';
-
 const COLORS = [
   { name: 'Yellow', hex: '#fbbf24' },
   { name: 'Red', hex: '#ef4444' },
@@ -81,7 +69,6 @@ const COLORS = [
   { name: 'Blue', hex: '#3b82f6' },
   { name: 'Purple', hex: '#a855f7' }
 ];
-
 const SOUNDS = [
   { id: 'none', icon: VolumeX, url: '' },
   { id: 'rain', icon: CloudLightning, url: '/assets/sounds/rain.mp3' },
@@ -91,7 +78,6 @@ const SOUNDS = [
   { id: 'birds', icon: Bird, url: '/assets/sounds/birds.mp3' },
   { id: 'fire', icon: Flame, url: '/assets/sounds/fire.mp3' }
 ];
-
 const TOOL_ICONS = {
   view: MousePointer2,
   highlight: Highlighter,
@@ -99,7 +85,6 @@ const TOOL_ICONS = {
   box: BoxSelect,
   note: MessageSquare
 };
-
 const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpdate, socket, roomId, roomData }) => {
   const [isZenMode, setIsZenMode] = useState(false);
   const [isNightMode, setIsNightMode] = useState(false);
@@ -136,10 +121,8 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const [thumbRange, setThumbRange] = useState({ start: 0, end: 20 });
   const pdfDocRef = useRef<any>(null);
   const PAGE_CACHE_MAX = 8;
-
   const [isFlashcardMode, setIsFlashcardMode] = useState(false);
   const [activeCardIndex, setActiveCardIndex] = useState(0);
-
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -175,16 +158,13 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const audioInputRef = useRef<HTMLInputElement>(null);
   const controlsTimeoutRef = useRef<number | null>(null);
   const enqueueWindowRef = useRef<any>(null);
-
   const t = translations[lang];
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
-
   // FIX 1: Timer logic - Only count when visible and active in Reader
   // Periodic sync every 30s ensures Dashboard/Notifications always reflect real-time reading.
   useEffect(() => {
     let interval: number | null = null;
-
     const syncDelta = () => {
       const total = sessionSecondsRef.current;
       const delta = total - lastSyncedSecondsRef.current;
@@ -194,7 +174,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         onStatsUpdateRef.current(result.starReached);
       }
     };
-
     const startTimer = () => {
       if (interval) clearInterval(interval);
       interval = window.setInterval(() => {
@@ -209,7 +188,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         }
       }, 1000);
     };
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         startTimer();
@@ -218,41 +196,34 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         syncDelta(); // Save when app goes background
       }
     };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
     startTimer();
-
     return () => {
       if (interval) clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       syncDelta(); // Final save on unmount
     };
   }, [book.id]);
-
   const formatSessionTime = (totalSeconds: number) => {
     const hrs = Math.floor(totalSeconds / 3600);
     const mins = Math.floor((totalSeconds % 3600) / 60);
     const secs = totalSeconds % 60;
     return `${hrs > 0 ? hrs + ':' : ''}${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
-
   useEffect(() => {
     if (!socket || !roomId) return;
-
     socket.on("pdf-requested", async ({ bookId, requesterId }: { bookId: string, requesterId: string }) => {
       if (isAdmin && bookId === book.id) {
         const data = await pdfStorage.getFile(bookId);
         if (data) socket.emit("send-pdf", { roomId, bookId, requesterId, pdfData: data });
       }
     });
-
     socket.on("pdf-received", async ({ bookId, pdfData }: { bookId: string, pdfData: ArrayBuffer }) => {
       if (bookId === book.id) {
         await pdfStorage.saveFile(bookId, pdfData);
         setPdfRequestSent(false);
       }
     });
-
     const setupVoice = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -261,7 +232,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       } catch (err) { console.error("Voice error", err); }
     };
     setupVoice();
-
     socket.on("room-updated", (data: { members: RoomMember[] }) => {
       setMembers(data.members);
       if (streamRef.current) {
@@ -270,13 +240,11 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         });
       }
     });
-
     socket.on("voice-signal", ({ from, signal }: VoiceSignalPayload) => {
       const peer = peersRef.current[from];
       if (peer) peer.signal(signal);
       else if (streamRef.current) addPeer(signal, from, streamRef.current!);
     });
-
     const createPeer = (userToSignal: string, stream: MediaStream) => {
       const combinedStream = new MediaStream([...stream.getTracks()]);
       if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach(track => combinedStream.addTrack(track));
@@ -292,7 +260,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       peersRef.current[userToSignal] = peer;
       setPeers(prev => ({ ...prev, [userToSignal]: peer }));
     };
-
     const addPeer = (incomingSignal: any, callerId: string, stream: MediaStream) => {
       const combinedStream = new MediaStream([...stream.getTracks()]);
       const peer = new Peer({ initiator: false, trickle: false, stream: combinedStream });
@@ -308,7 +275,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       peersRef.current[callerId] = peer;
       setPeers(prev => ({ ...prev, [callerId]: peer }));
     };
-
     return () => {
       socket.off("pdf-requested"); socket.off("pdf-received"); socket.off("room-updated"); socket.off("voice-signal");
       Object.values(peersRef.current).forEach(peer => peer.destroy());
@@ -316,7 +282,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     };
   }, [socket, roomId, isAdmin, book.id, userId, isMicActive]);
-
   const handleUserActivity = useCallback(() => {
     setShowControls(true);
     if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current);
@@ -326,7 +291,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       }
     }, 4000);
   }, [isToolsOpen, isArchiveOpen, isGoToPageOpen, isSoundPickerOpen, isThumbnailsOpen, editingAnnoId]);
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft') handlePageChange(currentPage - 1);
@@ -336,21 +300,18 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentPage, totalPages]);
-
   const toggleZenMode = () => {
     setIsZenMode(!isZenMode);
     if (!isZenMode) {
       setIsZenMode(true); setZoomScale(1); setIsToolsOpen(false); setIsThumbnailsOpen(false);
     }
   };
-
   useEffect(() => {
     // ─── YIELD HELPER: real main-thread release, prevents UI freeze ──────────
     const yieldToMain = (): Promise<void> =>
       typeof (scheduler as any)?.yield === 'function'
         ? (scheduler as any).yield()
         : new Promise(r => setTimeout(r, 4)); // 4ms = one frame budget
-
     const loadPdf = async () => {
       setIsLoading(true); setIsPdfLoading(true);
       try {
@@ -367,7 +328,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         let thumbRendering = false; const thumbQueue: number[] = [];
         const thumbSlots: Record<number, string> = {};
         pdfDocRef.current = pdf;
-
         // ── HIGH-RES PAGE RENDERER (scale 1.5) ──
         const flushQueue = async () => {
           if (rendering || queue.length === 0) return;
@@ -390,7 +350,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           }
           rendering = false;
         };
-
         // ── MICRO-THUMBNAIL RENDERER (100px wide, JPEG 0.45 ≈ 5KB each) ──
         const flushThumbQueue = async () => {
           if (thumbRendering || thumbQueue.length === 0) return;
@@ -421,7 +380,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           thumbRendering = false;
           setThumbCache(prev => ({ ...prev, ...thumbSlots }));
         };
-
         const WINDOW = 2;
         const enqueueWindow = (center: number, isThumbnailRequest = false) => {
           // Evict high-res pages far from current to cap memory
@@ -445,7 +403,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
             flushThumbQueue();
           }
         };
-
         (window as any).__pdfEnqueueWindow = enqueueWindow;
         enqueueWindow(currentPage);
         enqueueWindowRef.current = enqueueWindow;
@@ -457,7 +414,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       if (pdfDocRef.current) { pdfDocRef.current.destroy(); pdfDocRef.current = null; }
     };
   }, [book.id, roomId, socket, pdfRequestSent]);
-
   const handlePageChange = (newPage: number) => {
     if (newPage < 0 || newPage >= totalPages || newPage === currentPage) return;
     setDirection(newPage > currentPage ? 1 : -1);
@@ -466,14 +422,12 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     if ((window as any).__pdfEnqueueWindow) (window as any).__pdfEnqueueWindow(newPage);
     storageService.updateBookPage(book.id, newPage);
   };
-
   const jumpToPage = (e: React.FormEvent) => {
     e.preventDefault();
     const p = parseInt(targetPageInput) - 1;
     if (!isNaN(p)) handlePageChange(p);
     setIsGoToPageOpen(false); setTargetPageInput('');
   };
-
   const getRelativeCoords = (clientX: number, clientY: number) => {
     if (!pageRef.current) return { x: 0, y: 0 };
     const rect = pageRef.current.getBoundingClientRect();
@@ -481,7 +435,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     const rawY = ((clientY - rect.top) / rect.height) * 100;
     return { x: Math.max(0, Math.min(100, rawX)), y: Math.max(0, Math.min(100, rawY)) };
   };
-
   const handleTouchStart = (e: React.TouchEvent) => {
     handleUserActivity();
     if (e.touches.length === 2) {
@@ -491,7 +444,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     }
     if (activeTool !== 'view' && e.touches.length === 1) handleStart(e.touches[0].clientX, e.touches[0].clientY);
   };
-
   const handleTouchMove = (e: React.TouchEvent) => {
     if (e.touches.length === 2 && initialPinchDistance.current !== null) {
       const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
@@ -500,7 +452,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     }
     if (isDrawing && e.touches.length === 1) handleMove(e.touches[0].clientX, e.touches[0].clientY);
   };
-
   const handleStart = (clientX: number, clientY: number) => {
     handleUserActivity();
     if (activeTool === 'view' || isPinching) return;
@@ -511,13 +462,11 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     }
     setIsDrawing(true); setStartPos({ x, y }); setCurrentRect({ x, y, w: 0, h: 0 });
   };
-
   const handleMove = (clientX: number, clientY: number) => {
     if (!isDrawing || isPinching) return;
     const { x: currentX, y: currentY } = getRelativeCoords(clientX, clientY);
     setCurrentRect({ x: Math.min(startPos.x, currentX), y: Math.min(startPos.y, currentY), w: Math.abs(currentX - startPos.x), h: Math.abs(currentY - startPos.y) });
   };
-
   const handleEnd = () => {
     if (isPinching) {
       setIsPinching(false);
@@ -542,19 +491,15 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     }
     setIsDrawing(false); setCurrentRect(null);
   };
-
   const currentEditingAnno = annotations.find(a => a.id === editingAnnoId);
-
   const updateEditingAnnotation = (updates: Partial<Annotation>) => {
     const updated = annotations.map(a => a.id === editingAnnoId ? { ...a, ...updates } : a);
     setAnnotations(updated); storageService.updateBookAnnotations(book.id, updated);
   };
-
   // Removed periodic 60s auto-save to prevent double counting and ensure 
   // that we only save once on exit with the full accurate session time.
   // This also fixes the "0m" notification bug by ensuring the full session 
   // is committed to storage before the notification manager reads it.
-
   return (
     <div className={`fixed inset-0 z-[1000] bg-black flex flex-col ${fontClass} select-none overflow-hidden`} onMouseMove={handleUserActivity} onTouchStart={handleUserActivity}>
       <AnimatePresence>
@@ -583,7 +528,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           </MotionHeader>
         )}
       </AnimatePresence>
-
       <main className="flex-1 flex items-center justify-center bg-black relative overflow-hidden" ref={containerRef}>
         <AnimatePresence>
           {isThumbnailsOpen && (
@@ -632,7 +576,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
             </MotionDiv>
           )}
         </AnimatePresence>
-
         <div className={`w-full h-full flex items-center justify-center ${isZenMode ? 'p-0' : 'p-4 md:p-12'}`} onClick={() => isZenMode && handleUserActivity()}>
           <MotionDiv 
             ref={pageRef}
@@ -669,7 +612,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           </MotionDiv>
         </div>
       </main>
-
       <div className="fixed bottom-6 left-0 right-0 z-[2000] pointer-events-none px-6 flex flex-col items-center gap-4">
         <AnimatePresence>
           {showControls && (
@@ -697,7 +639,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                   </MotionDiv>
                 )}
               </AnimatePresence>
-
               <div className="bg-red-600/10 border border-red-600/30 px-5 py-1.5 rounded-full backdrop-blur-xl flex items-center gap-2 shadow-2xl">
                  <Clock size={12} className="text-red-600 animate-pulse" />
                  <span className="text-[10px] md:text-xs font-black text-red-600 tracking-widest">{Math.floor(sessionSeconds/60)}m</span>
@@ -715,7 +656,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           )}
         </AnimatePresence>
       </div>
-
       <AnimatePresence>
         {isArchiveOpen && (
           <MotionDiv key="archive" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/40 backdrop-blur-[40px] p-6 flex items-center justify-center pointer-events-auto">
@@ -742,7 +682,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
              </MotionDiv>
           </MotionDiv>
         )}
-
         {editingAnnoId && currentEditingAnno && (
           <MotionDiv key="editing-anno" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[4000] bg-black/60 backdrop-blur-xl flex items-center justify-center p-6 pointer-events-auto">
             <MotionDiv initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-black/40 backdrop-blur-2xl border border-white/10 p-5 rounded-[2rem] w-full max-w-[300px] shadow-5xl flex flex-col">
@@ -777,5 +716,4 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     </div>
   );
 };
-
 export default Reader;
