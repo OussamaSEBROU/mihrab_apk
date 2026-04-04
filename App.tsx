@@ -20,8 +20,8 @@ import {
   ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson
 } from 'lucide-react';
 declare const pdfjsLib: any;
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const MotionDiv = motion.div as any;
+// pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// const MotionDiv = motion.div as any;
 const MotionAside = motion.aside as any;
 // ===== CURATED ATMOSPHERIC COVER THEMES =====
 // Gradient-based deterministic covers as ultimate fallback for books without PDF covers
@@ -172,6 +172,7 @@ const App: React.FC = () => {
   const [loadingOverlayTitle, setLoadingOverlayTitle] = useState('');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const loadingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [loadingOverlayMode, setLoadingOverlayMode] = useState<'book' | 'shelf'>('book');
   // ── BOOK IMPORT SHELF SELECTION STATE ──
   const [showBookImportShelfSelect, setShowBookImportShelfSelect] = useState(false);
   const [pendingBookImportFile, setPendingBookImportFile] = useState<File | null>(null);
@@ -487,14 +488,20 @@ const App: React.FC = () => {
   const [shelfToDelete, setShelfToDelete] = useState<ShelfData | null>(null);
   const [deleteShelfConfirmInput, setDeleteShelfConfirmInput] = useState('');
   const handleReaderBack = useCallback(() => {
+    // Immediately refresh books from storage so Dashboard + main shelf reflect latest reading data
+    const freshBooks = storageService.getBooks();
+    setBooks(freshBooks);
     setView(ViewState.SHELF);
     setTimeout(() => {
       setSelectedBook(null);
       setIsUiVisible(true);
+      // Second refresh to capture any final sync delta from Reader unmount
       setBooks(storageService.getBooks());
-    }, 300); // Wait for exit animation to complete safely
+    }, 350);
   }, []);
   const handleStatsUpdate = useCallback((starReached?: number | null) => {
+    // Real-time omni-sync: immediately pull fresh data from storage into React state
+    // This ensures Dashboard stats, Today's Focus, and Book Mins are always current
     setBooks(storageService.getBooks());
     if (starReached) setCelebrationStar(starReached);
   }, []);
@@ -507,8 +514,9 @@ const App: React.FC = () => {
     toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 4500);
   }, []);
   // ── PREMIUM LOADING OVERLAY HELPERS ──
-  const startLoadingOverlay = useCallback((title: string) => {
+  const startLoadingOverlay = useCallback((title: string, mode: 'book' | 'shelf' = 'book') => {
     setLoadingOverlayTitle(title);
+    setLoadingOverlayMode(mode);
     setLoadingProgress(0);
     setShowLoadingOverlay(true);
     if (loadingIntervalRef.current) clearInterval(loadingIntervalRef.current);
@@ -533,7 +541,7 @@ const App: React.FC = () => {
     }
     
     setIsExportingShelf(true);
-    startLoadingOverlay(lang === 'ar' ? t.loadingExportTitle : t.loadingExportTitle);
+    startLoadingOverlay(t.loadingShelfExportTitle, 'shelf');
     try {
       const { uri, filename } = await communityService.exportShelf(
         { ...shelfToExport, name: exportShelfName.trim() },
@@ -555,11 +563,12 @@ const App: React.FC = () => {
       stopLoadingOverlay();
     }
   }, [shelfToExport, exportUserName, exportShelfName, books, lang, showToast, startLoadingOverlay, stopLoadingOverlay, t]);
-  // ── SHARE SHELF HANDLER ──
+  // ── SHARE SHELF HANDLER — with unified loading overlay ──
   const handleShareShelf = useCallback(async (shelf: ShelfData) => {
     const userName = exportUserName.trim() || localStorage.getItem('sanctuary_user_name') || (lang === 'ar' ? 'مستخدم المحراب' : 'Sanctuary User');
     const shelfNameInContext = exportShelfName.trim() || shelf.name;
     setIsSharingShelf(true);
+    startLoadingOverlay(t.loadingShelfShareTitle, 'shelf');
     try {
       const result = await communityService.shareShelf({ ...shelf, name: shelfNameInContext }, books, userName, lang);
       
@@ -579,8 +588,9 @@ const App: React.FC = () => {
       showToast(lang === 'ar' ? '✗ فشلت المشاركة' : '✗ Share failed', 'error');
     } finally {
       setIsSharingShelf(false);
+      stopLoadingOverlay();
     }
-  }, [exportUserName, books, lang, showToast]);
+  }, [exportUserName, books, lang, showToast, startLoadingOverlay, stopLoadingOverlay, t, exportShelfName]);
   const handleImportShelf = useCallback(async (file: File) => {
     setIsImportingShelf(true);
     startLoadingOverlay(lang === 'ar' ? t.loadingImportTitle : t.loadingImportTitle);
@@ -620,7 +630,7 @@ const App: React.FC = () => {
   }, [shelves, books, t, showToast, lang, startLoadingOverlay, stopLoadingOverlay]);
   // ── SINGLE BOOK EXPORT (Share via native sheet) — with loading overlay ──
   const handleExportBook = useCallback(async (book: Book) => {
-    startLoadingOverlay(lang === 'ar' ? t.loadingExportTitle : t.loadingExportTitle);
+    startLoadingOverlay(t.loadingExportTitle, 'book');
     try {
       await communityService.shareBook(book, lang);
     } catch (error) {
@@ -1177,7 +1187,7 @@ const App: React.FC = () => {
                     opacity: [0.05, 0.15, 0.05],
                   }}
                   transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-                  className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[80vw] rounded-full bg-red-600/20 blur-[100px]"
+                  className={`absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[80vw] rounded-full blur-[100px] ${loadingOverlayMode === 'shelf' ? 'bg-emerald-600/20' : 'bg-red-600/20'}`}
                 />
                 <MotionDiv
                   animate={{
@@ -1185,7 +1195,7 @@ const App: React.FC = () => {
                     opacity: [0.03, 0.1, 0.03],
                   }}
                   transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-                  className="absolute bottom-1/4 left-1/3 w-[60vw] h-[60vw] rounded-full bg-amber-500/10 blur-[80px]"
+                  className={`absolute bottom-1/4 left-1/3 w-[60vw] h-[60vw] rounded-full blur-[80px] ${loadingOverlayMode === 'shelf' ? 'bg-teal-500/10' : 'bg-amber-500/10'}`}
                 />
               </div>
               <div className="relative flex flex-col items-center justify-center px-8 max-w-md w-full">
@@ -1198,8 +1208,8 @@ const App: React.FC = () => {
                   className="mb-8"
                   style={{ perspective: '500px' }}
                 >
-                  <div className="w-20 h-20 rounded-[1.5rem] bg-gradient-to-br from-red-600/30 to-red-900/20 border border-red-500/30 flex items-center justify-center shadow-[0_0_40px_rgba(255,0,0,0.2)]">
-                    <BookOpen size={32} className="text-red-400" />
+                  <div className={`w-20 h-20 rounded-[1.5rem] bg-gradient-to-br ${loadingOverlayMode === 'shelf' ? 'from-emerald-600/30 to-emerald-900/20 border border-emerald-500/30 shadow-[0_0_40px_rgba(16,185,129,0.2)]' : 'from-red-600/30 to-red-900/20 border border-red-500/30 shadow-[0_0_40px_rgba(255,0,0,0.2)]'} flex items-center justify-center`}>
+                    {loadingOverlayMode === 'shelf' ? <Library size={32} className="text-emerald-400" /> : <BookOpen size={32} className="text-red-400" />}
                   </div>
                 </MotionDiv>
                 {/* Title */}
@@ -1217,7 +1227,7 @@ const App: React.FC = () => {
                   <MotionDiv
                     animate={{ width: `${loadingProgress}%` }}
                     transition={{ duration: 0.4, ease: 'easeOut' }}
-                    className="h-full bg-gradient-to-r from-red-600 via-red-500 to-amber-500 rounded-full shadow-[0_0_15px_rgba(255,0,0,0.5)]"
+                    className={`h-full rounded-full ${loadingOverlayMode === 'shelf' ? 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-400 shadow-[0_0_15px_rgba(16,185,129,0.5)]' : 'bg-gradient-to-r from-red-600 via-red-500 to-amber-500 shadow-[0_0_15px_rgba(255,0,0,0.5)]'}`}
                   />
                 </div>
                 {/* Animated loading dots */}
@@ -1235,7 +1245,7 @@ const App: React.FC = () => {
                         delay: i * 0.15,
                         ease: 'easeInOut',
                       }}
-                      className="w-1.5 h-1.5 rounded-full bg-red-500"
+                      className={`w-1.5 h-1.5 rounded-full ${loadingOverlayMode === 'shelf' ? 'bg-emerald-500' : 'bg-red-500'}`}
                     />
                   ))}
                 </div>
@@ -1248,18 +1258,18 @@ const App: React.FC = () => {
                 >
                   <div className="space-y-4">
                     <p className={`text-center leading-relaxed text-white/70 ${lang === 'ar' ? 'font-ar text-sm' : 'font-en text-xs'}`} style={{ fontFamily: lang === 'ar' ? 'Alexandria, sans-serif' : 'Montserrat, sans-serif', lineHeight: '1.8' }}>
-                      {t.loadingCommunityQuote}
+                      {loadingOverlayMode === 'shelf' ? t.shelfCommunityQuote : t.loadingCommunityQuote}
                     </p>
                     
                     {/* Intellectual Note — Reflective subtle style */}
                     <div className="pt-4 border-t border-white/10">
                       <p className={`text-center italic opacity-40 ${lang === 'ar' ? 'font-ar text-[10px]' : 'font-en text-[9px]'}`} style={{ fontFamily: lang === 'ar' ? 'Alexandria, sans-serif' : 'Montserrat, sans-serif', lineHeight: '1.6' }}>
-                        {t.sharingIntellectualNote}
+                        {loadingOverlayMode === 'shelf' ? t.shelfIntellectualNote : t.sharingIntellectualNote}
                       </p>
                     </div>
                   </div>
                   <div className="mt-3 flex justify-center">
-                    <div className="w-8 h-px bg-gradient-to-r from-transparent via-red-600/50 to-transparent" />
+                    <div className={`w-8 h-px bg-gradient-to-r from-transparent ${loadingOverlayMode === 'shelf' ? 'via-emerald-600/50' : 'via-red-600/50'} to-transparent`} />
                   </div>
                 </MotionDiv>
                 {/* Progress percentage */}
