@@ -39,7 +39,7 @@ export type FormatType = typeof FORMAT_HEADERS[keyof typeof FORMAT_HEADERS];
  */
 export const FILE_EXTENSIONS = {
   SHELF: '.zip',
-  SINGLE_BOOK: '.mbook',
+  SINGLE_BOOK: '.zip', // Unification: Books are now also zipped archives
 } as const;
 // ─────────────────────────────────────────────────────────
 //  JSZIP LAZY LOADER
@@ -268,9 +268,12 @@ const _validateZipFormat = async (
     if (detectedFormat === 'unknown') {
       return { valid: false, detectedFormat: 'unknown', expectedFormat };
     }
+    // Pro Detection: Count of books determines type regardless of extension
+    const bookCount = (manifest.books && Array.isArray(manifest.books)) ? manifest.books.length : 0;
+    const effectivelyABook = bookCount === 1;
     return {
-      valid: detectedFormat === expectedFormat,
-      detectedFormat,
+      valid: true, // Zip is a valid zip
+      detectedFormat: effectivelyABook ? FORMAT_HEADERS.SINGLE_BOOK : FORMAT_HEADERS.SHELF,
       expectedFormat,
       manifest,
     };
@@ -633,7 +636,6 @@ export const communityService = {
   /**
    * Validate a file's format before import.
    * Returns format info for the UI to display appropriate errors.
-   * IMPROVED: Now peeks into ZIP files even if extension is missing/wrong.
    */
   validateFileFormat: async (file: File): Promise<{
     isBook: boolean;
@@ -643,29 +645,24 @@ export const communityService = {
   }> => {
     const ext = file.name.toLowerCase();
     
-    // Fast path: known extensions
-    if (ext.endsWith('.mbook')) {
-      return { isBook: true, isShelf: false, isLegacy: false, formatName: 'Mihrab Book' };
-    }
-    if (ext.endsWith('.sbook')) {
-      return { isBook: true, isShelf: false, isLegacy: true, formatName: 'Legacy Book' };
+    // Robust path: Everything now flows through ZIP checking
+    if (ext.endsWith('.zip') || ext.endsWith('.mbook') || ext.endsWith('.sbook') || !ext.includes('.') || ext.endsWith('.bin')) {
+      try {
+        const validation = await _validateZipFormat(file, FORMAT_HEADERS.SINGLE_BOOK);
+        const bookCount = (validation.manifest?.books?.length) || 0;
+        
+        if (bookCount === 1) {
+          return { isBook: true, isShelf: false, isLegacy: false, formatName: 'Mihrab Book Archive' };
+        } 
+        if (bookCount > 1) {
+          return { isBook: false, isShelf: true, isLegacy: validation.detectedFormat === 'legacy', formatName: 'Mihrab Shelf Archive' };
+        }
+      } catch {
+        // Fall through to JSON or Unknown
+      }
     }
     if (ext.endsWith('.json')) {
       return { isBook: false, isShelf: true, isLegacy: true, formatName: 'Legacy JSON Shelf' };
-    }
-    // Robust path: Try to open as ZIP if extension is .zip or if unknown (might be renamed)
-    if (ext.endsWith('.zip') || !ext.includes('.') || ext.endsWith('.bin')) {
-      try {
-        const validation = await _validateZipFormat(file, FORMAT_HEADERS.SHELF);
-        if (validation.detectedFormat === FORMAT_HEADERS.SINGLE_BOOK) {
-          return { isBook: true, isShelf: false, isLegacy: false, formatName: 'Mihrab Book' };
-        }
-        if (validation.valid || validation.detectedFormat === 'legacy') {
-          return { isBook: false, isShelf: true, isLegacy: validation.detectedFormat === 'legacy', formatName: 'Shelf Archive' };
-        }
-      } catch {
-        // Not a zip file, fall through
-      }
     }
     return { isBook: false, isShelf: false, isLegacy: false, formatName: 'Unknown' };
   },
