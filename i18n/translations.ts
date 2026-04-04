@@ -1,4 +1,3 @@
-
 export const translations = {
   en: {
     title: 'SANCTUARY',
@@ -142,8 +141,27 @@ export const translations = {
     exportingBook: 'Preparing book...',
     bookExported: 'Book exported successfully!',
     bookImported: 'Book imported successfully!',
-    selectBookFile: 'Select Book File (.sbook)',
-    importBookDescription: 'Import a single book from a .sbook file. The book will be added to the current shelf.',
+    selectBookFile: 'Select Book File (.mbook)',
+    importBookDescription: 'Import a single book from a .mbook file.',
+    // NEW: Import workflow strings
+    importShelves: 'Import Shelves',
+    importSingleBook: 'Import Single Book',
+    importShelfDescription: 'Import an entire shelf archive (.zip) with all its books and annotations.',
+    importBookFileDescription: 'Import a single book (.mbook) and choose which shelf to add it to.',
+    selectShelfForBook: 'Select Destination Shelf',
+    addToExistingShelf: 'Add to Existing Shelf',
+    createNewShelfForBook: 'Create New Shelf',
+    newShelfNamePlaceholder: 'New shelf name...',
+    confirmImportBook: 'Import Book',
+    // NEW: Format mismatch alerts
+    formatMismatchTitle: 'Format Mismatch',
+    formatMismatchShelfAsBook: 'This file is a Shelf archive. Please use "Import Shelves" to import it.',
+    formatMismatchBookAsShelf: 'This file is a Single Book. Please use "Import Single Book" to import it.',
+    unsupportedFormat: 'Unsupported file format. Please select a .zip or .mbook file.',
+    // NEW: Premium loading screen
+    loadingExportTitle: 'Crafting Your Archive',
+    loadingImportTitle: 'Restoring Knowledge',
+    loadingCommunityQuote: 'Share your readings in the reading community and build a strong knowledge ecosystem',
   },
   ar: {
     title: 'المِحْرابْ',
@@ -287,7 +305,26 @@ export const translations = {
     exportingBook: 'جاري تجهيز الكتاب...',
     bookExported: 'تم تصدير الكتاب بنجاح!',
     bookImported: 'تم استيراد الكتاب بنجاح!',
-    selectBookFile: 'اختر ملف كتاب (.sbook)',
-    importBookDescription: 'استورد كتاباً واحداً من ملف .sbook. سيُضاف الكتاب إلى الرف الحالي.',
+    selectBookFile: 'اختر ملف كتاب (.mbook)',
+    importBookDescription: 'استورد كتاباً واحداً من ملف .mbook.',
+    // NEW: Import workflow strings
+    importShelves: 'استيراد الأرفف',
+    importSingleBook: 'استيراد كتاب واحد',
+    importShelfDescription: 'استورد أرشيف رف كامل (.zip) بجميع كتبه وتعليقاته.',
+    importBookFileDescription: 'استورد كتاباً واحداً (.mbook) واختر الرف المراد إضافته إليه.',
+    selectShelfForBook: 'اختر الرف المستهدف',
+    addToExistingShelf: 'إضافة إلى رف موجود',
+    createNewShelfForBook: 'إنشاء رف جديد',
+    newShelfNamePlaceholder: 'اسم الرف الجديد...',
+    confirmImportBook: 'استيراد الكتاب',
+    // NEW: Format mismatch alerts
+    formatMismatchTitle: 'عدم تطابق الصيغة',
+    formatMismatchShelfAsBook: 'هذا الملف هو أرشيف رف. يرجى استخدام "استيراد الأرفف" لاستيراده.',
+    formatMismatchBookAsShelf: 'هذا الملف هو كتاب واحد. يرجى استخدام "استيراد كتاب واحد" لاستيراده.',
+    unsupportedFormat: 'صيغة الملف غير مدعومة. يرجى اختيار ملف .zip أو .mbook.',
+    // NEW: Premium loading screen
+    loadingExportTitle: 'جاري صياغة الأرشيف',
+    loadingImportTitle: 'استعادة المعرفة',
+    loadingCommunityQuote: 'شارك قراءاتك في المجتمع القرائي وكونوا منظومة معرفية متينة',
   }
 };
