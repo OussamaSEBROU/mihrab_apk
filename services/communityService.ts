@@ -3,7 +3,6 @@ import { Share } from '@capacitor/share';
 import { pdfStorage } from './pdfStorage';
 import { CommunityShelfExportSchema } from '../types/schemas';
 import type { Book, ShelfData, Annotation } from '../types';
-
 export interface CommunityShelfExport {
   version: string;
   exportedAt: string;
@@ -22,11 +21,29 @@ export interface CommunityShelfExport {
     addedAt: number;
   }>;
 }
-
+// ─────────────────────────────────────────────────────────
+//  FORMAT IDENTIFIERS — Anti-Conflict Type Safety Protocol
+// ─────────────────────────────────────────────────────────
+/**
+ * Internal format headers used to distinguish file types.
+ * Prevents cross-importing (e.g., importing a shelf file as a book).
+ */
+export const FORMAT_HEADERS = {
+  SHELF: 'sanctuary-shelf-archive',
+  SINGLE_BOOK: 'sanctuary-single-book',
+} as const;
+export type FormatType = typeof FORMAT_HEADERS[keyof typeof FORMAT_HEADERS];
+/**
+ * File extensions for export types.
+ * .mbook replaces the deprecated .sbook format.
+ */
+export const FILE_EXTENSIONS = {
+  SHELF: '.zip',
+  SINGLE_BOOK: '.mbook',
+} as const;
 // ─────────────────────────────────────────────────────────
 //  JSZIP LAZY LOADER
 // ─────────────────────────────────────────────────────────
-
 let _jszip: any = null;
 const _loadJSZip = async (): Promise<any> => {
   if (_jszip) return _jszip;
@@ -39,15 +56,9 @@ const _loadJSZip = async (): Promise<any> => {
     document.head.appendChild(s);
   });
 };
-
 // ─────────────────────────────────────────────────────────
 //  MEMORY-SAFE BASE64 UTILITIES
 // ─────────────────────────────────────────────────────────
-
-/**
- * Converts a Uint8Array chunk to base64.
- * Designed for SMALL chunks (≤1 MB) to avoid V8 string limits.
- */
 const _chunkToB64 = (bytes: Uint8Array): string => {
   const SLICE = 4096;
   let bin = '';
@@ -57,11 +68,6 @@ const _chunkToB64 = (bytes: Uint8Array): string => {
   }
   return btoa(bin);
 };
-
-/**
- * Legacy-compatible: converts full Uint8Array to base64 for small payloads.
- * Falls back to chunked write for anything over SAFE_THRESHOLD.
- */
 const _u8ToB64 = (bytes: Uint8Array): string => {
   const CHUNK = 4096;
   let b = '';
@@ -71,29 +77,17 @@ const _u8ToB64 = (bytes: Uint8Array): string => {
   }
   return btoa(b);
 };
-
 // Yield control back to the main thread to prevent UI freeze
 const _yield = (): Promise<void> => new Promise(r => setTimeout(r, 0));
-
 // ─────────────────────────────────────────────────────────
 //  CHUNKED FILESYSTEM WRITER
-//  Writes a Uint8Array to Capacitor Filesystem in safe chunks.
-//  Avoids the IPC bridge limit and prevents OOM from a single
-//  massive base64 string.
 // ─────────────────────────────────────────────────────────
-
-const WRITE_CHUNK_SIZE = 512 * 1024; // 512 KB per IPC call — safe for all devices
-
-/**
- * Write a large Uint8Array to the native filesystem in chunked base64 calls.
- * Returns the native file URI.
- */
+const WRITE_CHUNK_SIZE = 512 * 1024;
 const _writeChunked = async (
   bytes: Uint8Array,
   filename: string,
   directory: typeof Directory.Cache | typeof Directory.Documents = Directory.Cache
 ): Promise<string> => {
-  // First chunk creates the file
   const firstChunk = bytes.subarray(0, Math.min(WRITE_CHUNK_SIZE, bytes.length));
   const result = await Filesystem.writeFile({
     path: filename,
@@ -102,32 +96,25 @@ const _writeChunked = async (
     recursive: true,
   });
   
-  // Subsequent chunks append
   for (let offset = WRITE_CHUNK_SIZE; offset < bytes.length; offset += WRITE_CHUNK_SIZE) {
     const end = Math.min(offset + WRITE_CHUNK_SIZE, bytes.length);
     const chunk = bytes.subarray(offset, end);
-
     await Filesystem.appendFile({
       path: filename,
       data: _chunkToB64(chunk),
       directory,
     });
-
-    // Yield every 2 MB to prevent ANR
     if ((offset / WRITE_CHUNK_SIZE) % 4 === 0) {
       await _yield();
     }
   }
-
   return result.uri;
 };
-
 // ─────────────────────────────────────────────────────────
 //  ZIP BUILDER — PROGRESSIVE (memory-bounded)
 //  Processes books ONE AT A TIME, releasing ArrayBuffer references
 //  between each book to allow GC to reclaim memory.
 // ─────────────────────────────────────────────────────────
-
 const _buildZipStreaming = async (
   shelf: ShelfData,
   books: Book[],
@@ -138,24 +125,19 @@ const _buildZipStreaming = async (
   const zip = new JSZip();
   const shelfBooks = books.filter(b => b.shelfId === shelf.id);
   const manifestBooks: any[] = [];
-
-  // Process books ONE AT A TIME to bound memory usage to max(single PDF size)
   for (let i = 0; i < shelfBooks.length; i++) {
     const book = shelfBooks[i];
     let cover = book.cover;
-
     try {
       if (!cover || !cover.startsWith('data:')) {
         const stored = await pdfStorage.getCover(book.id);
         if (stored) cover = stored;
       }
     } catch (e) { /* cover retrieval is non-critical */ }
-
     try {
       const buf = await pdfStorage.getFile(book.id);
       if (buf) {
         const fileSize = buf.byteLength;
-        // For large files or explicitly requested STORE, skip compression to reduce memory
         const forceStore = useStore || fileSize > 10 * 1024 * 1024;
         
         zip.file(`pdfs/${book.id}.pdf`, buf, {
@@ -166,7 +148,6 @@ const _buildZipStreaming = async (
     } catch (e) {
       console.error(`ZIP: PDF failed for "${book.title}"`, e);
     }
-
     manifestBooks.push({
       id: book.id,
       title: book.title,
@@ -177,23 +158,19 @@ const _buildZipStreaming = async (
       lastPage: book.lastPage || 0,
       addedAt: book.addedAt || Date.now(),
     });
-
-    // Yield every 3 books to allow GC and prevent ANR
     if (i % 3 === 2) {
       await _yield();
     }
   }
-
   zip.file('manifest.json', JSON.stringify({
     version: '2.0.0',
-    format: useStore ? 'zip-large' : 'zip',
+    format: FORMAT_HEADERS.SHELF,
     exportedAt: new Date().toISOString(),
     shelfName: shelf.name,
     shelfColor: shelf.color,
     userName,
     books: manifestBooks,
   }));
-
   return zip.generateAsync({
     type: 'uint8array',
     compression: useStore ? 'STORE' : 'DEFLATE',
@@ -201,44 +178,118 @@ const _buildZipStreaming = async (
     streamFiles: true,
   });
 };
-
+// ─────────────────────────────────────────────────────────
+//  SINGLE BOOK ZIP BUILDER — Unified with Shelf methodology
+//  Mirrors shelf structure: PDF in /pdfs/, manifest with format header
+// ─────────────────────────────────────────────────────────
+const _buildSingleBookZip = async (
+  book: Book,
+  userName: string = 'User',
+): Promise<Uint8Array> => {
+  const JSZip = await _loadJSZip();
+  const zip = new JSZip();
+  // Retrieve PDF from IDB and store in /pdfs/ — mirroring shelf structure
+  const pdfData = await pdfStorage.getFile(book.id);
+  if (pdfData) {
+    zip.file(`pdfs/${book.id}.pdf`, pdfData, { compression: 'STORE' });
+  }
+  // Retrieve high-quality cover
+  let cover = book.cover;
+  try {
+    const stored = await pdfStorage.getCover(book.id);
+    if (stored) cover = stored;
+  } catch {}
+  // Unified manifest — 100% compatible with shelf schema
+  // Uses `books` array with single entry for total compatibility
+  const manifest = {
+    version: '2.0.0',
+    format: FORMAT_HEADERS.SINGLE_BOOK,
+    exportedAt: new Date().toISOString(),
+    shelfName: `📖 ${book.title}`,
+    shelfColor: '#ff0000',
+    userName,
+    books: [{
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      cover: cover || '',
+      annotations: book.annotations || [],
+      stars: book.stars || 0,
+      lastPage: book.lastPage || 0,
+      timeSpentSeconds: book.timeSpentSeconds || 0,
+      addedAt: book.addedAt || Date.now(),
+    }],
+  };
+  zip.file('manifest.json', JSON.stringify(manifest));
+  return zip.generateAsync({
+    type: 'uint8array',
+    compression: 'STORE',
+    streamFiles: true,
+  });
+};
+// ─────────────────────────────────────────────────────────
+//  FORMAT VALIDATION — Anti-Conflict Protocol
+//  Reads manifest.json from ZIP and validates format header
+// ─────────────────────────────────────────────────────────
+export interface FormatValidationResult {
+  valid: boolean;
+  detectedFormat: FormatType | 'legacy' | 'unknown';
+  expectedFormat: FormatType;
+  manifest?: any;
+}
+const _validateZipFormat = async (
+  file: File,
+  expectedFormat: FormatType
+): Promise<FormatValidationResult> => {
+  const JSZip = await _loadJSZip();
+  const zip = await JSZip.loadAsync(file);
+  
+  const mf = zip.file('manifest.json');
+  if (!mf) {
+    return { valid: false, detectedFormat: 'unknown', expectedFormat };
+  }
+  const manifest = JSON.parse(await mf.async('string'));
+  const detectedFormat = manifest.format || 'legacy';
+  // Legacy files (no format header) are treated as shelf format
+  if (detectedFormat === 'legacy') {
+    return {
+      valid: expectedFormat === FORMAT_HEADERS.SHELF,
+      detectedFormat: 'legacy',
+      expectedFormat,
+      manifest,
+    };
+  }
+  return {
+    valid: detectedFormat === expectedFormat,
+    detectedFormat,
+    expectedFormat,
+    manifest,
+  };
+};
 // ─────────────────────────────────────────────────────────
 //  ZIP IMPORT — PROGRESSIVE (memory-bounded)
-//  Extracts PDFs one at a time and saves to IDB immediately,
-//  then nullifies the reference so GC can reclaim.
+//  Extracts PDFs one at a time and saves to IDB immediately
 // ─────────────────────────────────────────────────────────
-
 const _importFromZip = async (file: File): Promise<{ shelf: ShelfData; books: Book[] }> => {
   const JSZip = await _loadJSZip();
-
-  // Use the File (Blob) directly — JSZip supports Blob input,
-  // which avoids loading the entire file into a separate ArrayBuffer.
   const zip = await JSZip.loadAsync(file);
-
   const mf = zip.file('manifest.json');
   if (!mf) throw new Error('Invalid shelf file: missing manifest.json');
   const manifest = JSON.parse(await mf.async('string'));
-
   const shelfId = `shelf_${Date.now()}`;
   const shelf: ShelfData = {
     id: shelfId,
     name: manifest.shelfName,
     color: manifest.shelfColor || '#ff0000',
   };
-
   const books: Book[] = [];
-
   for (const bd of (manifest.books || [])) {
     const newId = `book_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
     try {
       const pdfEntry = zip.file(`pdfs/${bd.id}.pdf`);
       if (pdfEntry) {
-        // Extract one PDF at a time — 'arraybuffer' type means we get a single
-        // ArrayBuffer which is immediately written to IDB and can be GC'd.
         const pdfBuf: ArrayBuffer = await pdfEntry.async('arraybuffer');
         await pdfStorage.saveFile(newId, pdfBuf);
-        // pdfBuf goes out of scope here → eligible for GC
       }
       if (bd.cover?.startsWith('data:image')) {
         await pdfStorage.saveCover(newId, bd.cover);
@@ -246,7 +297,6 @@ const _importFromZip = async (file: File): Promise<{ shelf: ShelfData; books: Bo
     } catch (e) {
       console.error(`Import ZIP: failed for "${bd.title}"`, e);
     }
-
     books.push({
       id: newId, shelfId,
       title: bd.title, author: bd.author,
@@ -257,14 +307,101 @@ const _importFromZip = async (file: File): Promise<{ shelf: ShelfData; books: Bo
       lastPage: bd.lastPage,
       annotations: bd.annotations || [],
     });
-
-    // Yield after each book to allow GC to reclaim the extracted PDF buffer
     await _yield();
   }
-
   return { shelf, books };
 };
-
+// ─────────────────────────────────────────────────────────
+//  SINGLE BOOK IMPORT — From unified .mbook ZIP
+//  Supports both "add to existing shelf" and "create new shelf"
+// ─────────────────────────────────────────────────────────
+const _importSingleBookFromZip = async (
+  file: File,
+  targetShelfId: string,
+): Promise<Book> => {
+  const JSZip = await _loadJSZip();
+  const zip = await JSZip.loadAsync(file);
+  const metaFile = zip.file('manifest.json');
+  if (!metaFile) throw new Error('Invalid book file: missing manifest.json');
+  const manifest = JSON.parse(await metaFile.async('string'));
+  // Extract the single book entry from the unified manifest
+  const bookData = manifest.books?.[0];
+  if (!bookData) throw new Error('Invalid book file: no book data in manifest');
+  const newId = `book_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // Import PDF from /pdfs/ directory (unified structure)
+  const pdfEntry = zip.file(`pdfs/${bookData.id}.pdf`);
+  if (pdfEntry) {
+    const pdfBuf: ArrayBuffer = await pdfEntry.async('arraybuffer');
+    await pdfStorage.saveFile(newId, pdfBuf);
+  }
+  // Also try legacy location (book.pdf) for backward compatibility with old .sbook
+  if (!pdfEntry) {
+    const legacyPdf = zip.file('book.pdf');
+    if (legacyPdf) {
+      const pdfBuf: ArrayBuffer = await legacyPdf.async('arraybuffer');
+      await pdfStorage.saveFile(newId, pdfBuf);
+    }
+  }
+  // Import cover
+  const cover = bookData.cover || '';
+  if (cover.startsWith('data:')) {
+    await pdfStorage.saveCover(newId, cover);
+  }
+  return {
+    id: newId,
+    shelfId: targetShelfId,
+    title: bookData.title,
+    author: bookData.author,
+    cover,
+    content: '[VISUAL_PDF_MODE]',
+    timeSpentSeconds: bookData.timeSpentSeconds || 0,
+    dailyTimeSeconds: 0,
+    stars: bookData.stars || 0,
+    addedAt: bookData.addedAt || Date.now(),
+    lastPage: bookData.lastPage || 0,
+    annotations: bookData.annotations || [],
+  };
+};
+// Legacy .sbook backward-compatible import
+const _importLegacySbook = async (
+  file: File,
+  targetShelfId: string,
+): Promise<Book> => {
+  const JSZip = await _loadJSZip();
+  const zip = await JSZip.loadAsync(file);
+  // Legacy .sbook uses book.json instead of manifest.json
+  const metaFile = zip.file('book.json') || zip.file('manifest.json');
+  if (!metaFile) throw new Error('Invalid book file: missing metadata');
+  const meta = JSON.parse(await metaFile.async('string'));
+  // If manifest.json with books array, redirect to unified import
+  if (meta.books && Array.isArray(meta.books)) {
+    return _importSingleBookFromZip(file, targetShelfId);
+  }
+  const newId = `book_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // Legacy PDF location
+  const pdfEntry = zip.file('book.pdf');
+  if (pdfEntry) {
+    const pdfBuf: ArrayBuffer = await pdfEntry.async('arraybuffer');
+    await pdfStorage.saveFile(newId, pdfBuf);
+  }
+  if (meta.cover?.startsWith('data:')) {
+    await pdfStorage.saveCover(newId, meta.cover);
+  }
+  return {
+    id: newId,
+    shelfId: targetShelfId,
+    title: meta.title,
+    author: meta.author,
+    cover: meta.cover || '',
+    content: '[VISUAL_PDF_MODE]',
+    timeSpentSeconds: meta.timeSpentSeconds || 0,
+    dailyTimeSeconds: 0,
+    stars: meta.stars || 0,
+    addedAt: meta.addedAt || Date.now(),
+    lastPage: meta.lastPage || 0,
+    annotations: meta.annotations || [],
+  };
+};
 const _importFromJson = async (
   jsonData: string,
   targetShelfId?: string
@@ -273,7 +410,6 @@ const _importFromJson = async (
   const shelfId = targetShelfId || `shelf_${Date.now()}`;
   const shelf: ShelfData = { id: shelfId, name: data.shelfName, color: data.shelfColor || '#ff0000' };
   const books: Book[] = [];
-
   for (const bd of data.books) {
     const newId = `book_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     if (bd.content?.length) {
@@ -299,11 +435,9 @@ const _importFromJson = async (
   }
   return { shelf, books };
 };
-
 // ─────────────────────────────────────────────────────────
 //  SHARE HELPER — chunked write + native share
 // ─────────────────────────────────────────────────────────
-
 const _writeAndShare = async (
   zipBytes: Uint8Array,
   filename: string,
@@ -314,55 +448,56 @@ const _writeAndShare = async (
   const uri = await _writeChunked(zipBytes, filename, Directory.Cache);
   await Share.share({ title, text, files: [uri], dialogTitle });
 };
-
 // ─────────────────────────────────────────────────────────
 //  PUBLIC API
 // ─────────────────────────────────────────────────────────
-
 export const communityService = {
-
+  // ---- FORMAT CONSTANTS (exposed for UI) ----
+  FORMAT_HEADERS,
+  FILE_EXTENSIONS,
   /**
    * Export a shelf as a ZIP file.
-   * 
-   * ARCHITECTURE CHANGE (v2.1):
-   * Returns { uri, filename } instead of { data, filename }.
-   * The ZIP is written directly to the native filesystem in chunks,
-   * never held as a single base64 string in JS memory.
    */
   exportShelf: async (
     shelf: ShelfData, books: Book[], userName = 'User'
   ): Promise<{ uri: string; filename: string }> => {
     const zipBytes = await _buildZipStreaming(shelf, books, userName);
-    const name = shelf.name.replace(/[\\\/\*?:"<>|]/g, '').trim() || 'shelf';
-    const filename = `${name}.zip`;
-
-    // Write ZIP bytes to filesystem in safe chunks — no single large base64 string
+    const name = shelf.name.replace(/[\\/\*?:"<>|]/g, '').trim() || 'shelf';
+    const filename = `${name}${FILE_EXTENSIONS.SHELF}`;
     const uri = await _writeChunked(zipBytes, filename, Directory.Documents);
-
-    // Release the zipBytes buffer now that it's persisted
-    // (V8 will GC it once this scope exits)
-
     return { uri, filename };
   },
-
   importShelf: async (
     jsonData: string, targetShelfId?: string
   ): Promise<{ shelf: ShelfData; books: Book[] }> => {
     return _importFromJson(jsonData, targetShelfId);
   },
-
+  /**
+   * Import a file — auto-detects format (shelf vs book).
+   * For .mbook and .sbook files, throws FORMAT_MISMATCH error
+   * so the caller can redirect to importBook instead.
+   */
   importFile: async (file: File): Promise<{ shelf: ShelfData; books: Book[] }> => {
-    if (file.name.toLowerCase().endsWith('.zip')) return _importFromZip(file);
+    const ext = file.name.toLowerCase();
+    
+    // .mbook files are ALWAYS single-book format — reject for shelf import
+    if (ext.endsWith('.mbook') || ext.endsWith('.sbook')) {
+      throw new Error('FORMAT_MISMATCH:SINGLE_BOOK');
+    }
+    if (ext.endsWith('.zip')) {
+      // Validate format header for .zip files
+      const validation = await _validateZipFormat(file, FORMAT_HEADERS.SHELF);
+      if (!validation.valid && validation.detectedFormat === FORMAT_HEADERS.SINGLE_BOOK) {
+        throw new Error('FORMAT_MISMATCH:SINGLE_BOOK');
+      }
+      return _importFromZip(file);
+    }
+    
     const json = await communityService.readFile(file);
     return _importFromJson(json);
   },
-
   /**
    * Download/save a file using its native URI.
-   * 
-   * ARCHITECTURE CHANGE (v2.1):
-   * Now accepts a URI (from exportShelf) instead of raw base64 content.
-   * This eliminates the double-serialization bottleneck entirely.
    */
   downloadFile: async (uri: string, filename: string, lang: 'ar' | 'en' = 'ar'): Promise<void> => {
     try {
@@ -373,7 +508,6 @@ export const communityService = {
       });
     } catch (e) { console.error('Download failed', e); }
   },
-
   readFile: (file: File): Promise<string> =>
     new Promise((res, rej) => {
       const r = new FileReader();
@@ -381,7 +515,6 @@ export const communityService = {
       r.onerror = () => rej(new Error('Failed to read file'));
       r.readAsText(file);
     }),
-
   shareShelf: async (
     shelf: ShelfData, books: Book[], userName = 'User', lang: 'ar' | 'en' = 'ar'
   ): Promise<{ success: boolean; method: 'share' | 'clipboard' }> => {
@@ -402,11 +535,10 @@ export const communityService = {
       
       const zipBytes = await _buildZipStreaming(shelf, books, userName, useLargeMethod);
       
-      const name = shelf.name.replace(/[\\\/\*?:"<>|]/g, '').trim() || 'shelf';
-
+      const name = shelf.name.replace(/[\\/\*?:"<>|]/g, '').trim() || 'shelf';
       await _writeAndShare(
         zipBytes,
-        `share_${name}.zip`,
+        `share_${name}${FILE_EXTENSIONS.SHELF}`,
         lang === 'ar' ? `مشاركة رف: ${shelf.name}` : `Share Shelf: ${shelf.name}`,
         lang === 'ar' ? `إليك كتبي من المحراب - ${userName}` : `Here are my Sanctuary books - ${userName}`,
         lang === 'ar' ? 'اختر تطبيقاً للمشاركة' : 'Choose app to share'
@@ -417,96 +549,83 @@ export const communityService = {
       return { success: false, method: 'clipboard' };
     }
   },
-
   // ─────────────────────────────────────────────────────────
-  //  SINGLE BOOK PORTABILITY — Export / Import / Share
+  //  SINGLE BOOK PORTABILITY v2.0 — Unified .mbook Format
+  //  REPLACES deprecated .sbook methodology entirely.
+  //  Mirrors shelf ZIP structure: /pdfs/ + manifest.json
   // ─────────────────────────────────────────────────────────
-
   exportBook: async (book: Book): Promise<{ uri: string; filename: string }> => {
-    const JSZip = await _loadJSZip();
-    const zip = new JSZip();
-
-    // Get PDF data
-    const pdfData = await pdfStorage.getFile(book.id);
-    if (pdfData) {
-      zip.file('book.pdf', pdfData, { compression: 'STORE' });
-    }
-
-    // Get cover
-    let cover = book.cover;
-    try {
-      const stored = await pdfStorage.getCover(book.id);
-      if (stored) cover = stored;
-    } catch {}
-
-    // Metadata manifest
-    zip.file('book.json', JSON.stringify({
-      version: '1.0.0',
-      format: 'sanctuary-book',
-      exportedAt: new Date().toISOString(),
-      title: book.title,
-      author: book.author,
-      cover: cover || '',
-      annotations: book.annotations || [],
-      stars: book.stars || 0,
-      lastPage: book.lastPage || 0,
-      timeSpentSeconds: book.timeSpentSeconds || 0,
-      addedAt: book.addedAt || Date.now(),
-    }));
-
-    const zipBytes: Uint8Array = await zip.generateAsync({
-      type: 'uint8array',
-      compression: 'STORE',
-      streamFiles: true,
-    });
-
-    const safeName = book.title.replace(/[\\/*?:"<>|]/g, '').trim() || 'book';
-    const filename = `${safeName}.sbook`;
+    const userName = localStorage.getItem('sanctuary_user_name') || 'User';
+    const zipBytes = await _buildSingleBookZip(book, userName);
+    const safeName = book.title.replace(/[\\/\*?:"<>|]/g, '').trim() || 'book';
+    const filename = `${safeName}${FILE_EXTENSIONS.SINGLE_BOOK}`;
     const uri = await _writeChunked(zipBytes, filename, Directory.Cache);
-
     return { uri, filename };
   },
-
+  /**
+   * Import a single book from .mbook (or legacy .sbook).
+   * Returns the imported Book object assigned to the given shelf.
+   */
   importBook: async (file: File, targetShelfId: string): Promise<Book> => {
-    const JSZip = await _loadJSZip();
-    const zip = await JSZip.loadAsync(file);
-
-    const metaFile = zip.file('book.json');
-    if (!metaFile) throw new Error('Invalid book file: missing book.json');
-    const meta = JSON.parse(await metaFile.async('string'));
-
-    const newId = `book_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    // Import PDF
-    const pdfEntry = zip.file('book.pdf');
-    if (pdfEntry) {
-      const pdfBuf: ArrayBuffer = await pdfEntry.async('arraybuffer');
-      await pdfStorage.saveFile(newId, pdfBuf);
+    const ext = file.name.toLowerCase();
+    
+    // Validate format for .zip files that might be shelves
+    if (ext.endsWith('.zip')) {
+      const validation = await _validateZipFormat(file, FORMAT_HEADERS.SINGLE_BOOK);
+      if (!validation.valid && validation.detectedFormat === FORMAT_HEADERS.SHELF) {
+        throw new Error('FORMAT_MISMATCH:SHELF');
+      }
+      // If it's a valid single-book zip, import it
+      if (validation.valid) {
+        return _importSingleBookFromZip(file, targetShelfId);
+      }
     }
-
-    // Import cover
-    if (meta.cover?.startsWith('data:')) {
-      await pdfStorage.saveCover(newId, meta.cover);
+    // Handle .mbook (new unified format)
+    if (ext.endsWith('.mbook')) {
+      return _importSingleBookFromZip(file, targetShelfId);
     }
-
-    return {
-      id: newId,
-      shelfId: targetShelfId,
-      title: meta.title,
-      author: meta.author,
-      cover: meta.cover || '',
-      content: '[VISUAL_PDF_MODE]',
-      timeSpentSeconds: meta.timeSpentSeconds || 0,
-      dailyTimeSeconds: 0,
-      stars: meta.stars || 0,
-      addedAt: meta.addedAt || Date.now(),
-      lastPage: meta.lastPage || 0,
-      annotations: meta.annotations || [],
-    };
+    // Handle legacy .sbook (backward compatibility)
+    if (ext.endsWith('.sbook')) {
+      return _importLegacySbook(file, targetShelfId);
+    }
+    throw new Error('UNSUPPORTED_FORMAT');
   },
-
+  /**
+   * Validate a file's format before import.
+   * Returns format info for the UI to display appropriate errors.
+   */
+  validateFileFormat: async (file: File): Promise<{
+    isBook: boolean;
+    isShelf: boolean;
+    isLegacy: boolean;
+    formatName: string;
+  }> => {
+    const ext = file.name.toLowerCase();
+    
+    if (ext.endsWith('.mbook')) {
+      return { isBook: true, isShelf: false, isLegacy: false, formatName: 'Mihrab Book' };
+    }
+    if (ext.endsWith('.sbook')) {
+      return { isBook: true, isShelf: false, isLegacy: true, formatName: 'Legacy Book' };
+    }
+    if (ext.endsWith('.json')) {
+      return { isBook: false, isShelf: true, isLegacy: true, formatName: 'Legacy JSON Shelf' };
+    }
+    if (ext.endsWith('.zip')) {
+      try {
+        const validation = await _validateZipFormat(file, FORMAT_HEADERS.SHELF);
+        if (validation.detectedFormat === FORMAT_HEADERS.SINGLE_BOOK) {
+          return { isBook: true, isShelf: false, isLegacy: false, formatName: 'Mihrab Book' };
+        }
+        return { isBook: false, isShelf: true, isLegacy: validation.detectedFormat === 'legacy', formatName: 'Shelf Archive' };
+      } catch {
+        return { isBook: false, isShelf: true, isLegacy: false, formatName: 'ZIP Archive' };
+      }
+    }
+    return { isBook: false, isShelf: false, isLegacy: false, formatName: 'Unknown' };
+  },
   shareBook: async (book: Book, lang: 'ar' | 'en' = 'ar'): Promise<void> => {
-    const { uri } = await communityService.exportBook(book);
+    const { uri, filename } = await communityService.exportBook(book);
     await Share.share({
       title: lang === 'ar' ? `كتاب: ${book.title}` : `Book: ${book.title}`,
       text: lang === 'ar' ? `شارك كتاب "${book.title}" من المحراب` : `Sharing "${book.title}" from Sanctuary`,
