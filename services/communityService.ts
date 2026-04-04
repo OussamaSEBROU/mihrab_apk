@@ -217,6 +217,8 @@ const _buildSingleBookZip = async (
       stars: book.stars || 0,
       lastPage: book.lastPage || 0,
       timeSpentSeconds: book.timeSpentSeconds || 0,
+      dailyTimeSeconds: book.dailyTimeSeconds || 0,
+      lastReadAt: book.lastReadAt || Date.now(),
       addedAt: book.addedAt || Date.now(),
     }],
   };
@@ -480,8 +482,9 @@ export const communityService = {
   importFile: async (file: File): Promise<{ shelf: ShelfData; books: Book[] }> => {
     const ext = file.name.toLowerCase();
     
-    // .mbook files are ALWAYS single-book format — reject for shelf import
+    // Intelligence: Allow smart detection. Only reject if strictly needed.
     if (ext.endsWith('.mbook') || ext.endsWith('.sbook')) {
+      // If we are in shelf import but it's clearly a single book, we will handle it gracefully in the UI
       throw new Error('FORMAT_MISMATCH:SINGLE_BOOK');
     }
     if (ext.endsWith('.zip')) {
