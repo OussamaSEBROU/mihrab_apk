@@ -163,6 +163,10 @@ export const translations = {
     loadingImportTitle: 'Restoring Knowledge',
     loadingCommunityQuote: 'Share your readings in the reading community and build a strong knowledge ecosystem',
     sharingIntellectualNote: 'Note: Sharing includes all your intellectual explorations, marginalia, and scholarly annotations, preserving the integrity of your cognitive journey.',
+    loadingShelfShareTitle: 'Sharing Your Collection',
+    loadingShelfExportTitle: 'Crafting Shelf Archive',
+    shelfCommunityQuote: 'Share your curated selections and intellectual taste with the literary community of readers and writers, and build bridges of the knowledge ecosystem through critique and reinforcement.',
+    shelfIntellectualNote: 'Note: Your curated shelf selections, annotations, and reading journey will be shared in their entirety, preserving the depth and breadth of your intellectual curation.',
   },
   ar: {
     title: 'المِحْرابْ',
@@ -328,5 +332,9 @@ export const translations = {
     loadingImportTitle: 'استعادة المعرفة',
     loadingCommunityQuote: 'شارك قراءاتك في المجتمع القرائي وكونوا منظومة معرفية متينة',
     sharingIntellectualNote: 'تنبيه: ستتم المشاركة بكافة تعليقاتك الفكرية وملاحظاتك الهامشية وتهميشاتك الخاصة، حفظاً لتمام الفائدة وتخليداً لرحلتك المعرفية داخل الكتاب.',
+    loadingShelfShareTitle: 'جاري مشاركة المجموعة',
+    loadingShelfExportTitle: 'جاري صياغة أرشيف الرف',
+    shelfCommunityQuote: 'شارك مُختاراتك وذوقك الفكري مع المجتمع القرائي من القراء والكُتّاب، واربطوا جسور المنظومة المعرفية بترسانة النقد والتعزيز.',
+    shelfIntellectualNote: 'تنبيه: ستتم مشاركة مختاراتك المنسقة بالكامل مع كافة التعليقات والتهميشات، حفاظاً على عمق وتكامل رحلتك في التنسيق الفكري.',
   }
 };
