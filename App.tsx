@@ -1246,9 +1246,18 @@ const App: React.FC = () => {
                   transition={{ delay: 0.5 }}
                   className="w-full px-6 py-5 rounded-2xl bg-white/[0.04] border border-white/[0.08] backdrop-blur-xl"
                 >
-                  <p className="text-center font-ar text-sm leading-relaxed text-white/70" style={{ fontFamily: 'Amiri, Alexandria, serif', lineHeight: '2' }}>
-                    شارك قراءاتك في المجتمع القرائي وكونوا منظومة معرفية متينة
-                  </p>
+                  <div className="space-y-4">
+                    <p className={`text-center leading-relaxed text-white/70 ${lang === 'ar' ? 'font-ar text-sm' : 'font-en text-xs'}`} style={{ fontFamily: lang === 'ar' ? 'Alexandria, sans-serif' : 'Montserrat, sans-serif', lineHeight: '1.8' }}>
+                      {t.loadingCommunityQuote}
+                    </p>
+                    
+                    {/* Intellectual Note — Reflective subtle style */}
+                    <div className="pt-4 border-t border-white/10">
+                      <p className={`text-center italic opacity-40 ${lang === 'ar' ? 'font-ar text-[10px]' : 'font-en text-[9px]'}`} style={{ fontFamily: lang === 'ar' ? 'Alexandria, sans-serif' : 'Montserrat, sans-serif', lineHeight: '1.6' }}>
+                        {t.sharingIntellectualNote}
+                      </p>
+                    </div>
+                  </div>
                   <div className="mt-3 flex justify-center">
                     <div className="w-8 h-px bg-gradient-to-r from-transparent via-red-600/50 to-transparent" />
                   </div>
