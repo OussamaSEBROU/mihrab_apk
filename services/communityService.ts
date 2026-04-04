@@ -240,33 +240,44 @@ export interface FormatValidationResult {
   manifest?: any;
 }
 const _validateZipFormat = async (
-  file: File,
+  file: File | Blob,
   expectedFormat: FormatType
 ): Promise<FormatValidationResult> => {
-  const JSZip = await _loadJSZip();
-  const zip = await JSZip.loadAsync(file);
-  
-  const mf = zip.file('manifest.json');
-  if (!mf) {
-    return { valid: false, detectedFormat: 'unknown', expectedFormat };
-  }
-  const manifest = JSON.parse(await mf.async('string'));
-  const detectedFormat = manifest.format || 'legacy';
-  // Legacy files (no format header) are treated as shelf format
-  if (detectedFormat === 'legacy') {
+  try {
+    const JSZip = await _loadJSZip();
+    // Safety: ArrayBuffer is the most stable input for JSZip across devices
+    const buffer = await (file as File).arrayBuffer();
+    const zip = await JSZip.loadAsync(buffer);
+    
+    // Check modern manifest first
+    let mf = zip.file('manifest.json');
+    let manifest: any = null;
+    let detectedFormat: FormatType | 'legacy' | 'unknown' = 'unknown';
+    if (mf) {
+      manifest = JSON.parse(await mf.async('string'));
+      detectedFormat = manifest.format || 'legacy';
+    } else {
+      // Check legacy book structure (book.json)
+      const legacyMf = zip.file('book.json');
+      if (legacyMf) {
+        manifest = JSON.parse(await legacyMf.async('string'));
+        // Legacy book.json didn't specify format, but it's clearly a single book
+        detectedFormat = manifest.id && manifest.title ? FORMAT_HEADERS.SINGLE_BOOK : 'legacy';
+      }
+    }
+    if (detectedFormat === 'unknown') {
+      return { valid: false, detectedFormat: 'unknown', expectedFormat };
+    }
     return {
-      valid: expectedFormat === FORMAT_HEADERS.SHELF,
-      detectedFormat: 'legacy',
+      valid: detectedFormat === expectedFormat,
+      detectedFormat,
       expectedFormat,
       manifest,
     };
+  } catch (e) {
+    console.error('[CommunityService] ZIP Validation Error:', e);
+    return { valid: false, detectedFormat: 'unknown', expectedFormat };
   }
-  return {
-    valid: detectedFormat === expectedFormat,
-    detectedFormat,
-    expectedFormat,
-    manifest,
-  };
 };
 // ─────────────────────────────────────────────────────────
 //  ZIP IMPORT — PROGRESSIVE (memory-bounded)
@@ -274,7 +285,8 @@ const _validateZipFormat = async (
 // ─────────────────────────────────────────────────────────
 const _importFromZip = async (file: File): Promise<{ shelf: ShelfData; books: Book[] }> => {
   const JSZip = await _loadJSZip();
-  const zip = await JSZip.loadAsync(file);
+  const buffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(buffer);
   const mf = zip.file('manifest.json');
   if (!mf) throw new Error('Invalid shelf file: missing manifest.json');
   const manifest = JSON.parse(await mf.async('string'));
@@ -322,7 +334,8 @@ const _importSingleBookFromZip = async (
   targetShelfId: string,
 ): Promise<Book> => {
   const JSZip = await _loadJSZip();
-  const zip = await JSZip.loadAsync(file);
+  const buffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(buffer);
   const metaFile = zip.file('manifest.json');
   if (!metaFile) throw new Error('Invalid book file: missing manifest.json');
   const manifest = JSON.parse(await metaFile.async('string'));
@@ -370,7 +383,8 @@ const _importLegacySbook = async (
   targetShelfId: string,
 ): Promise<Book> => {
   const JSZip = await _loadJSZip();
-  const zip = await JSZip.loadAsync(file);
+  const buffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(buffer);
   // Legacy .sbook uses book.json instead of manifest.json
   const metaFile = zip.file('book.json') || zip.file('manifest.json');
   if (!metaFile) throw new Error('Invalid book file: missing metadata');
@@ -482,22 +496,32 @@ export const communityService = {
   importFile: async (file: File): Promise<{ shelf: ShelfData; books: Book[] }> => {
     const ext = file.name.toLowerCase();
     
-    // Intelligence: Allow smart detection. Only reject if strictly needed.
+    // Explicit single-book check
     if (ext.endsWith('.mbook') || ext.endsWith('.sbook')) {
-      // If we are in shelf import but it's clearly a single book, we will handle it gracefully in the UI
       throw new Error('FORMAT_MISMATCH:SINGLE_BOOK');
     }
-    if (ext.endsWith('.zip')) {
-      // Validate format header for .zip files
+    // Try robust ZIP probe for files without proper extension or .zip/.bin
+    if (ext.endsWith('.zip') || !ext.includes('.') || ext.endsWith('.bin')) {
       const validation = await _validateZipFormat(file, FORMAT_HEADERS.SHELF);
-      if (!validation.valid && validation.detectedFormat === FORMAT_HEADERS.SINGLE_BOOK) {
+      
+      // If we are in shelf import but detected a single book, redirect
+      if (validation.detectedFormat === FORMAT_HEADERS.SINGLE_BOOK) {
         throw new Error('FORMAT_MISMATCH:SINGLE_BOOK');
       }
-      return _importFromZip(file);
+      
+      // If valid shelf zip (modern or legacy)
+      if (validation.valid || validation.detectedFormat === 'legacy') {
+        return _importFromZip(file);
+      }
     }
     
-    const json = await communityService.readFile(file);
-    return _importFromJson(json);
+    // Fallback to JSON for .json or similar
+    try {
+      const json = await communityService.readFile(file);
+      return _importFromJson(json);
+    } catch {
+      throw new Error('UNSUPPORTED_FORMAT');
+    }
   },
   /**
    * Download/save a file using its native URI.
@@ -516,7 +540,15 @@ export const communityService = {
       const r = new FileReader();
       r.onload = e => res(e.target?.result as string);
       r.onerror = () => rej(new Error('Failed to read file'));
+      // Performance: use readAsText for small JSON metadata
       r.readAsText(file);
+    }),
+  readFileAsArrayBuffer: (file: File): Promise<ArrayBuffer> =>
+    new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = e => res(e.target?.result as ArrayBuffer);
+      r.onerror = () => rej(new Error('Failed to read buffer'));
+      r.readAsArrayBuffer(file);
     }),
   shareShelf: async (
     shelf: ShelfData, books: Book[], userName = 'User', lang: 'ar' | 'en' = 'ar'
@@ -572,30 +604,36 @@ export const communityService = {
   importBook: async (file: File, targetShelfId: string): Promise<Book> => {
     const ext = file.name.toLowerCase();
     
-    // Validate format for .zip files that might be shelves
-    if (ext.endsWith('.zip')) {
-      const validation = await _validateZipFormat(file, FORMAT_HEADERS.SINGLE_BOOK);
-      if (!validation.valid && validation.detectedFormat === FORMAT_HEADERS.SHELF) {
-        throw new Error('FORMAT_MISMATCH:SHELF');
-      }
-      // If it's a valid single-book zip, import it
-      if (validation.valid) {
-        return _importSingleBookFromZip(file, targetShelfId);
-      }
-    }
-    // Handle .mbook (new unified format)
-    if (ext.endsWith('.mbook')) {
+    // Use robust probe if extension isn't clear
+    const isMbook = ext.endsWith('.mbook');
+    const isSbook = ext.endsWith('.sbook');
+    const isUnknownZip = ext.endsWith('.zip') || !ext.includes('.') || ext.endsWith('.bin');
+    if (isMbook) {
       return _importSingleBookFromZip(file, targetShelfId);
     }
-    // Handle legacy .sbook (backward compatibility)
-    if (ext.endsWith('.sbook')) {
+    if (isSbook) {
       return _importLegacySbook(file, targetShelfId);
+    }
+    if (isUnknownZip) {
+      // Probe content
+      const validation = await _validateZipFormat(file, FORMAT_HEADERS.SINGLE_BOOK);
+      
+      // If it's a valid single-book structure (even if renamed)
+      if (validation.detectedFormat === FORMAT_HEADERS.SINGLE_BOOK || validation.valid) {
+        return _importSingleBookFromZip(file, targetShelfId);
+      }
+      
+      // If it's a shelf instead, notify UI
+      if (validation.detectedFormat === FORMAT_HEADERS.SHELF) {
+        throw new Error('FORMAT_MISMATCH:SHELF');
+      }
     }
     throw new Error('UNSUPPORTED_FORMAT');
   },
   /**
    * Validate a file's format before import.
    * Returns format info for the UI to display appropriate errors.
+   * IMPROVED: Now peeks into ZIP files even if extension is missing/wrong.
    */
   validateFileFormat: async (file: File): Promise<{
     isBook: boolean;
@@ -605,6 +643,7 @@ export const communityService = {
   }> => {
     const ext = file.name.toLowerCase();
     
+    // Fast path: known extensions
     if (ext.endsWith('.mbook')) {
       return { isBook: true, isShelf: false, isLegacy: false, formatName: 'Mihrab Book' };
     }
@@ -614,15 +653,18 @@ export const communityService = {
     if (ext.endsWith('.json')) {
       return { isBook: false, isShelf: true, isLegacy: true, formatName: 'Legacy JSON Shelf' };
     }
-    if (ext.endsWith('.zip')) {
+    // Robust path: Try to open as ZIP if extension is .zip or if unknown (might be renamed)
+    if (ext.endsWith('.zip') || !ext.includes('.') || ext.endsWith('.bin')) {
       try {
         const validation = await _validateZipFormat(file, FORMAT_HEADERS.SHELF);
         if (validation.detectedFormat === FORMAT_HEADERS.SINGLE_BOOK) {
           return { isBook: true, isShelf: false, isLegacy: false, formatName: 'Mihrab Book' };
         }
-        return { isBook: false, isShelf: true, isLegacy: validation.detectedFormat === 'legacy', formatName: 'Shelf Archive' };
+        if (validation.valid || validation.detectedFormat === 'legacy') {
+          return { isBook: false, isShelf: true, isLegacy: validation.detectedFormat === 'legacy', formatName: 'Shelf Archive' };
+        }
       } catch {
-        return { isBook: false, isShelf: true, isLegacy: false, formatName: 'ZIP Archive' };
+        // Not a zip file, fall through
       }
     }
     return { isBook: false, isShelf: false, isLegacy: false, formatName: 'Unknown' };
