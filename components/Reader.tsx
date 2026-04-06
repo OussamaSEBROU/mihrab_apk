@@ -119,6 +119,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const [direction, setDirection] = useState(0); 
   const [thumbCache, setThumbCache] = useState<Record<number, string>>({});
   const [thumbRange, setThumbRange] = useState({ start: 0, end: 20 });
+  const thumbInitialScrollDone = useRef(false);
   const pdfDocRef = useRef<any>(null);
   const PAGE_CACHE_MAX = 8;
   const [isFlashcardMode, setIsFlashcardMode] = useState(false);
@@ -533,7 +534,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       <main className="flex-1 flex items-center justify-center bg-black relative overflow-hidden" ref={containerRef}>
         <AnimatePresence>
           {isThumbnailsOpen && (
-            <MotionDiv key="thumbnails" initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -100, opacity: 0 }} className="fixed left-0 top-0 bottom-0 w-24 md:w-32 bg-black/80 backdrop-blur-2xl z-[1500] border-r border-white/5 flex flex-col pt-24 pb-8 overflow-hidden">
+            <MotionDiv key="thumbnails" initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -100, opacity: 0 }} onAnimationComplete={() => { thumbInitialScrollDone.current = false; }} className="fixed left-0 top-0 bottom-0 w-24 md:w-32 bg-black/80 backdrop-blur-2xl z-[1500] border-r border-white/5 flex flex-col pt-24 pb-8 overflow-hidden">
               <div
                 className="flex-1 overflow-y-auto no-scrollbar"
                 onScroll={(e) => {
@@ -547,7 +548,8 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                   }
                 }}
                 ref={(el) => {
-                  if (!el) return;
+                  if (!el || thumbInitialScrollDone.current) return;
+                  thumbInitialScrollDone.current = true;
                   requestAnimationFrame(() => {
                     el.scrollTop = Math.max(0, (currentPage - 2) * 120);
                     const viewH = el.clientHeight;
@@ -605,11 +607,20 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
             </AnimatePresence>
             <div className="absolute inset-0 pointer-events-none">
               {annotations.filter(a => a.pageIndex === currentPage).map(anno => (
-                <div key={anno.id} className="absolute pointer-events-auto cursor-pointer" onClick={() => setEditingAnnoId(anno.id)} style={{ left: `${anno.x}%`, top: `${anno.y}%`, width: anno.width ? `${anno.width}%` : '0%', height: anno.height ? `${anno.height}%` : '0%', backgroundColor: anno.type === 'highlight' ? `${anno.color}44` : 'transparent', borderBottom: anno.type === 'underline' ? `4px solid ${anno.color}` : 'none', border: anno.type === 'box' ? `2px solid ${anno.color}` : 'none' }}>
+                <div key={anno.id} className="absolute pointer-events-auto cursor-pointer" onClick={() => setEditingAnnoId(anno.id)} style={{
+                  left: `${anno.x}%`,
+                  top: `${anno.y}%`,
+                  width: anno.width ? `${anno.width}%` : '0%',
+                  height: anno.type === 'underline' ? '4px' : (anno.height ? `${anno.height}%` : '0%'),
+                  backgroundColor: anno.type === 'highlight' ? `${anno.color}44` : (anno.type === 'underline' ? anno.color : 'transparent'),
+                  borderRadius: anno.type === 'underline' ? '2px' : undefined,
+                  boxShadow: anno.type === 'underline' ? `0 0 6px ${anno.color}88` : undefined,
+                  border: anno.type === 'box' ? `2px solid ${anno.color}` : 'none'
+                }}>
                   {anno.type === 'note' && <div className="w-7 h-7 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-2xl border-2 border-white flex items-center justify-center" style={{ backgroundColor: anno.color }}><MessageSquare size={12} className="text-white" /></div>}
                 </div>
               ))}
-              {currentRect && <div className="absolute border-2 border-dashed pointer-events-none" style={{ left: `${currentRect.x}%`, top: `${currentRect.y}%`, width: `${currentRect.w}%`, height: `${activeTool === 'underline' ? 2 : currentRect.h}%`, borderColor: activeColor, backgroundColor: activeTool === 'highlight' ? `${activeColor}22` : 'transparent' }} />}
+              {currentRect && <div className="absolute border-2 border-dashed pointer-events-none" style={{ left: `${currentRect.x}%`, top: `${currentRect.y}%`, width: `${currentRect.w}%`, height: activeTool === 'underline' ? '4px' : `${currentRect.h}%`, borderColor: activeColor, backgroundColor: activeTool === 'highlight' ? `${activeColor}22` : (activeTool === 'underline' ? activeColor : 'transparent') }} />}
             </div>
           </MotionDiv>
         </div>
@@ -728,14 +739,14 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                   max={totalPages}
                   value={targetPageInput}
                   onChange={(e: any) => setTargetPageInput(e.target.value)}
-                  onKeyDown={(e: any) => { if (e.key === 'Enter') { jumpToPage(parseInt(targetPageInput)); setIsGoToPageOpen(false); setTargetPageInput(''); } }}
+                  onKeyDown={(e: any) => { if (e.key === 'Enter') { e.preventDefault(); const p = parseInt(targetPageInput) - 1; if (!isNaN(p)) handlePageChange(p); setIsGoToPageOpen(false); setTargetPageInput(''); } }}
                   placeholder={`1 - ${totalPages}`}
                   className="flex-1 bg-white/5 border border-white/10 rounded-xl p-3 text-sm font-black text-white text-center outline-none focus:border-red-600/50 transition-colors placeholder:text-white/15 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   autoFocus
                 />
               </div>
               <button
-                onClick={() => { jumpToPage(parseInt(targetPageInput)); setIsGoToPageOpen(false); setTargetPageInput(''); }}
+                onClick={() => { const p = parseInt(targetPageInput) - 1; if (!isNaN(p)) handlePageChange(p); setIsGoToPageOpen(false); setTargetPageInput(''); }}
                 className="w-full bg-red-600 py-3 rounded-xl font-black uppercase text-[9px] tracking-[0.3em] text-white hover:bg-red-500 active:scale-95 transition-all shadow-xl shadow-red-600/20 flex items-center justify-center gap-2"
               >
                 <Search size={12}/>
