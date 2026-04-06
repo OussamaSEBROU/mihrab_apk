@@ -620,8 +620,17 @@ const App: React.FC = () => {
     } catch (error: any) {
       console.error('Import failed:', error);
       if (error?.message?.includes('FORMAT_MISMATCH:SINGLE_BOOK')) {
-        setFormatMismatchMessage(lang === 'ar' ? t.formatMismatchBookAsShelf : t.formatMismatchBookAsShelf);
-        setShowFormatMismatch(true);
+        // ── AUTO-ROUTING: Single book detected in shelf import → redirect to book import ──
+        setPendingBookImportFile(file);
+        setBookImportTargetShelfId(activeShelfId);
+        setBookImportMode('existing');
+        setBookImportNewShelfName('');
+        setShowBookImportShelfSelect(true);
+        setShowImportModal(false);
+        showToast(
+          lang === 'ar' ? '📖 كتاب واحد — اختر الرف المستهدف' : '📖 Single book detected — select target shelf',
+          'success'
+        );
       } else {
         showToast(`✗ ${t.importFailed}`, 'error');
       }
@@ -648,8 +657,8 @@ const App: React.FC = () => {
     try {
       const formatInfo = await communityService.validateFileFormat(file);
       if (!formatInfo.isBook && formatInfo.isShelf) {
-        setFormatMismatchMessage(lang === 'ar' ? t.formatMismatchShelfAsBook : t.formatMismatchShelfAsBook);
-        setShowFormatMismatch(true);
+        // ── AUTO-ROUTING: Shelf detected in book import → redirect to shelf import ──
+        handleImportShelf(file);
         return;
       }
       if (!formatInfo.isBook && !formatInfo.isShelf) {
@@ -700,9 +709,9 @@ const App: React.FC = () => {
       );
     } catch (error: any) {
       console.error('Book import failed:', error);
-      if (error?.message?.includes('FORMAT_MISMATCH:SHELF')) {
-        setFormatMismatchMessage(lang === 'ar' ? t.formatMismatchShelfAsBook : t.formatMismatchShelfAsBook);
-        setShowFormatMismatch(true);
+      if (error?.message?.includes('FORMAT_MISMATCH:SHELF') && pendingBookImportFile) {
+        // ── AUTO-ROUTING: Shelf detected during book import → redirect to shelf import ──
+        handleImportShelf(pendingBookImportFile);
       } else {
         showToast(lang === 'ar' ? '✗ فشل استيراد الكتاب' : '✗ Book import failed', 'error');
       }
