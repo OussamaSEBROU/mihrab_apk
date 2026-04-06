@@ -159,10 +159,12 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const audioInputRef = useRef<HTMLInputElement>(null);
   const controlsTimeoutRef = useRef<number | null>(null);
   const enqueueWindowRef = useRef<any>(null);
+  const pageReadyRef = useRef(false);
   const t = translations[lang];
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
-  // FIX 1: Timer logic - Only count when visible and active in Reader
+  // TRUE-READING TIMER: Only counts when PDF page is loaded AND visible.
+  // Uses pageReadyRef to gate counting — zero phantom seconds during PDF loading.
   // Uses timerRef for immediate suspension on back-button click.
   // Periodic sync every 30s ensures Dashboard/Notifications always reflect real-time reading.
   useEffect(() => {
@@ -178,7 +180,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     const startTimer = () => {
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = window.setInterval(() => {
-        if (document.visibilityState === 'visible') {
+        if (document.visibilityState === 'visible' && pageReadyRef.current) {
           setSessionSeconds(prev => {
             const next = prev + 1;
             sessionSecondsRef.current = next;
@@ -408,10 +410,13 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         enqueueWindow(currentPage);
         enqueueWindowRef.current = enqueueWindow;
         setIsLoading(false); setIsPdfLoading(false);
+        pageReadyRef.current = true; // PDF loaded — timer may now count
       } catch (err) { setIsLoading(false); setIsPdfLoading(false); }
     };
+    pageReadyRef.current = false; // Reset on new load cycle
     loadPdf();
     return () => {
+      pageReadyRef.current = false;
       if (pdfDocRef.current) { pdfDocRef.current.destroy(); pdfDocRef.current = null; }
     };
   }, [book.id, roomId, socket, pdfRequestSent]);
