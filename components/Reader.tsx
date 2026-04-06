@@ -162,9 +162,9 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
   // FIX 1: Timer logic - Only count when visible and active in Reader
+  // Uses timerRef for immediate suspension on back-button click.
   // Periodic sync every 30s ensures Dashboard/Notifications always reflect real-time reading.
   useEffect(() => {
-    let interval: number | null = null;
     const syncDelta = () => {
       const total = sessionSecondsRef.current;
       const delta = total - lastSyncedSecondsRef.current;
@@ -175,8 +175,8 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       }
     };
     const startTimer = () => {
-      if (interval) clearInterval(interval);
-      interval = window.setInterval(() => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = window.setInterval(() => {
         if (document.visibilityState === 'visible') {
           setSessionSeconds(prev => {
             const next = prev + 1;
@@ -192,14 +192,14 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       if (document.visibilityState === 'visible') {
         startTimer();
       } else {
-        if (interval) clearInterval(interval);
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         syncDelta(); // Save when app goes background
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     startTimer();
     return () => {
-      if (interval) clearInterval(interval);
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       syncDelta(); // Final save on unmount
     };
@@ -507,6 +507,8 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           <MotionHeader key="header" initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto">
             <div className="flex items-center gap-1.5 md:gap-3">
               <button onClick={() => {
+                // IMMEDIATE timer kill — zero phantom seconds
+                if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
                 // Sync remaining unsaved seconds BEFORE navigating back
                 const delta = sessionSecondsRef.current - lastSyncedSecondsRef.current;
                 if (delta > 0) {
@@ -709,6 +711,37 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                 </button>
                 <button onClick={() => { setEditingAnnoId(null); setActiveTool('view'); }} className="flex-1 bg-white text-black py-2 rounded-lg font-black uppercase text-[8px] tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2"><Check size={12}/>{isRTL ? 'حفظ بالفهرس' : 'Save to Index'}</button>
               </div>
+            </MotionDiv>
+          </MotionDiv>
+        )}
+        {isGoToPageOpen && (
+          <MotionDiv key="goto-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[3000] bg-black/60 backdrop-blur-[40px] flex items-center justify-center p-6 pointer-events-auto">
+            <MotionDiv initial={{ scale: 0.9, y: 30 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b]/95 backdrop-blur-3xl border border-white/10 p-6 rounded-[2rem] w-full max-w-[280px] shadow-[0_0_80px_rgba(255,0,0,0.1)] flex flex-col gap-5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black uppercase tracking-widest text-white/80">{t.goToPage}</h3>
+                <button onClick={() => { setIsGoToPageOpen(false); setTargetPageInput(''); }} className="p-1.5 rounded-full bg-white/5 text-white/30 hover:text-white transition-colors"><X size={14}/></button>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  value={targetPageInput}
+                  onChange={(e: any) => setTargetPageInput(e.target.value)}
+                  onKeyDown={(e: any) => { if (e.key === 'Enter') { jumpToPage(parseInt(targetPageInput)); setIsGoToPageOpen(false); setTargetPageInput(''); } }}
+                  placeholder={`1 - ${totalPages}`}
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl p-3 text-sm font-black text-white text-center outline-none focus:border-red-600/50 transition-colors placeholder:text-white/15 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  autoFocus
+                />
+              </div>
+              <button
+                onClick={() => { jumpToPage(parseInt(targetPageInput)); setIsGoToPageOpen(false); setTargetPageInput(''); }}
+                className="w-full bg-red-600 py-3 rounded-xl font-black uppercase text-[9px] tracking-[0.3em] text-white hover:bg-red-500 active:scale-95 transition-all shadow-xl shadow-red-600/20 flex items-center justify-center gap-2"
+              >
+                <Search size={12}/>
+                {t.jump}
+              </button>
+              <p className="text-[8px] text-white/15 text-center font-bold uppercase tracking-widest">{isRTL ? `صفحة ${currentPage + 1} من ${totalPages}` : `Page ${currentPage + 1} of ${totalPages}`}</p>
             </MotionDiv>
           </MotionDiv>
         )}
