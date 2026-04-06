@@ -157,6 +157,9 @@ const _buildZipStreaming = async (
       stars: book.stars || 0,
       lastPage: book.lastPage || 0,
       addedAt: book.addedAt || Date.now(),
+      timeSpentSeconds: book.timeSpentSeconds || 0,
+      dailyTimeSeconds: book.dailyTimeSeconds || 0,
+      lastReadDate: book.lastReadDate || '',
     });
     if (i % 3 === 2) {
       await _yield();
@@ -317,11 +320,13 @@ const _importFromZip = async (file: File): Promise<{ shelf: ShelfData; books: Bo
     books.push({
       id: newId, shelfId,
       title: bd.title, author: bd.author,
-      cover: bd.cover || '', content: '',
-      timeSpentSeconds: 0, dailyTimeSeconds: 0,
+      cover: bd.cover || '', content: '[VISUAL_PDF_MODE]',
+      timeSpentSeconds: bd.timeSpentSeconds || 0,
+      dailyTimeSeconds: bd.dailyTimeSeconds || 0,
+      lastReadDate: bd.lastReadDate || '',
       stars: bd.stars || 0,
       addedAt: bd.addedAt || Date.now(),
-      lastPage: bd.lastPage,
+      lastPage: bd.lastPage || 0,
       annotations: bd.annotations || [],
     });
     await _yield();
@@ -443,11 +448,13 @@ const _importFromJson = async (
     books.push({
       id: newId, shelfId,
       title: bd.title, author: bd.author,
-      cover: bd.cover || '', content: '',
-      timeSpentSeconds: 0, dailyTimeSeconds: 0,
+      cover: bd.cover || '', content: '[VISUAL_PDF_MODE]',
+      timeSpentSeconds: bd.timeSpentSeconds || 0,
+      dailyTimeSeconds: bd.dailyTimeSeconds || 0,
+      lastReadDate: bd.lastReadDate || '',
       stars: bd.stars || 0,
       addedAt: bd.addedAt || Date.now(),
-      lastPage: bd.lastPage,
+      lastPage: bd.lastPage || 0,
       annotations: bd.annotations || [],
     });
     await _yield();
