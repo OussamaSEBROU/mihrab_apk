@@ -53,68 +53,53 @@ jobs:
           KEY_PASSWORD: "mihrab2026"
         run: |
           mkdir -p android/app/
-          
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "--- [WARNING] NO KEYSTORE FOUND IN SECRETS ---"
-            echo "Generating a permanent key for you now..."
+            echo "Generating permanent key..."
             keytool -genkey -v -keystore android/app/release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=Default, C=US"
-            
-            echo "--- [ACTION REQUIRED] COPY THE CODE BELOW ---"
-            echo "Go to GitHub Secrets and add KEYSTORE_BASE64 with this value:"
+            echo "--- [ACTION REQUIRED] COPY THIS CODE ---"
             base64 -w 0 android/app/release-key.jks
             echo ""
-            echo "--- END OF CODE ---"
           else
-            echo "Using existing keystore from Secrets..."
             echo "$KEYSTORE_BASE64" | base64 -d > android/app/release-key.jks
           fi
 
       - name: Configure Gradle Signing & Versioning
+        shell: python
         env:
           KEYSTORE_PASSWORD: "mihrab2026"
           KEY_ALIAS: "mihrab-alias"
           KEY_PASSWORD: "mihrab2026"
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          # استعمال بايثون لإجراء عملية جراحية دقيقة لملف Gradle
-          python3 -c "
           import os, re
           
-          path = 'android/app/build.gradle'
-          with open(path, 'r') as f:
+          gradle_path = 'android/app/build.gradle'
+          with open(gradle_path, 'r') as f:
               content = f.read()
           
-          # 1. إعداد كتلة التوقيع بمسمى فريد لتجنب التداخل
-          signing_block = '''
-    signingConfigs {
-        mihrabSigning {
+          # إنشاء بلوك التوقيع
+          signing_conf = f"""
+    signingConfigs {{
+        mihrabSigning {{
             storeFile file('release-key.jks')
-            storePassword \"''' + os.environ['KEYSTORE_PASSWORD'] + '''\"
-            keyAlias \"''' + os.environ['KEY_ALIAS'] + '''\"
-            keyPassword \"''' + os.environ['KEY_PASSWORD'] + '''\"
-        }
-    }
-          '''
+            storePassword '{os.environ['KEYSTORE_PASSWORD']}'
+            keyAlias '{os.environ['KEY_ALIAS']}'
+            keyPassword '{os.environ['KEY_PASSWORD']}'
+        }}
+    }}
+          """
           
-          # حقن التوقيع بعد بداية بلوك أندرويد مباشرة
+          # حقن التوقيع والنسخة
           if 'mihrabSigning' not in content:
-              content = content.replace('android {', 'android {' + signing_block)
+              content = content.replace('android {', 'android {' + signing_conf)
           
-          # 2. ربط التوقيع بالـ Release والـ Debug داخل buildTypes فقط
-          # نستخدم التعابير النمطية لضمان الدقة
-          build_types_match = re.search(r'buildTypes\s*\{', content)
-          if build_types_match:
-              start = build_types_match.end()
-              # حقن التوقيع داخل الـ release والـ debug
-              content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
-              content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
+          content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
+          content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
           
-          # 3. تحديث رقم الإصدار آلياً
-          run_number = os.getenv('GITHUB_RUN_NUMBER', '1')
-          content = re.sub(r'versionCode\s+\d+', f'versionCode {run_number}', content)
+          content = re.sub(r'versionCode\s+\d+', f"versionCode {os.environ['RUN_NUMBER']}", content)
           
-          with open(path, 'w') as f:
+          with open(gradle_path, 'w') as f:
               f.write(content)
-          "
 
       - name: Build Release APK
         run: |
