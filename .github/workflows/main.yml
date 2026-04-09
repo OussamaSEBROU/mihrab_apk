@@ -54,9 +54,8 @@ jobs:
         run: |
           mkdir -p android/app/
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "Generating permanent key..."
             keytool -genkey -v -keystore android/app/release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=Default, C=US"
-            echo "--- [ACTION REQUIRED] COPY THIS CODE ---"
+            echo "--- [ACTION REQUIRED] COPY THIS ---"
             base64 -w 0 android/app/release-key.jks
             echo ""
           else
@@ -77,26 +76,26 @@ jobs:
           with open(gradle_path, 'r') as f:
               content = f.read()
           
-          # إنشاء بلوك التوقيع
-          signing_conf = f"""
-    signingConfigs {{
-        mihrabSigning {{
-            storeFile file('release-key.jks')
-            storePassword '{os.environ['KEYSTORE_PASSWORD']}'
-            keyAlias '{os.environ['KEY_ALIAS']}'
-            keyPassword '{os.environ['KEY_PASSWORD']}'
-        }}
-    }}
-          """
+          # استبدال القيم بطريقة لا تزعج نظام GitHub (بدون أقواس مزدوجة)
+          kp = os.environ['KEYSTORE_PASSWORD']
+          ka = os.environ['KEY_ALIAS']
+          ky = os.environ['KEY_PASSWORD']
           
-          # حقن التوقيع والنسخة
+          signing_conf = "\n" + "    signingConfigs {" + "\n" + \
+                         "        mihrabSigning {" + "\n" + \
+                         "            storeFile file('release-key.jks')" + "\n" + \
+                         "            storePassword '" + kp + "'" + "\n" + \
+                         "            keyAlias '" + ka + "'" + "\n" + \
+                         "            keyPassword '" + ky + "'" + "\n" + \
+                         "        }" + "\n" + "    }" + "\n"
+          
           if 'mihrabSigning' not in content:
               content = content.replace('android {', 'android {' + signing_conf)
           
           content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
           content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
           
-          content = re.sub(r'versionCode\s+\d+', f"versionCode {os.environ['RUN_NUMBER']}", content)
+          content = re.sub(r'versionCode\s+\d+', "versionCode " + os.environ['RUN_NUMBER'], content)
           
           with open(gradle_path, 'w') as f:
               f.write(content)
