@@ -1,13 +1,13 @@
-name: Build Android APK
+name: Eternal Update & Deploy Pipeline
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch: # يسمح لك بتشغيل العملية يدوياً
 
 jobs:
   build:
+    name: Build & Sign Production APK
     runs-on: ubuntu-latest
 
     steps:
@@ -44,53 +44,77 @@ jobs:
       - name: Generate Mobile Assets
         run: npm run mobile:assets
 
-      # ── الإصلاح التقني: توقيع ثابت ورقم إصدار تصاعدي ──
-      - name: Configure Stable Signing and Versioning
+      - name: Handle Signing Key (Self-Healing)
+        id: signing_key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: "mihrab2026"
+          KEY_ALIAS: "mihrab-alias"
+          KEY_PASSWORD: "mihrab2026"
+        run: |
+          mkdir -p android/app/
+          
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "--- [WARNING] NO KEYSTORE FOUND IN SECRETS ---"
+            echo "Generating a permanent key for you now..."
+            keytool -genkey -v -keystore android/app/release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=Default, C=US"
+            
+            echo "--- [ACTION REQUIRED] COPY THE CODE BELOW ---"
+            echo "Go to GitHub Secrets and add KEYSTORE_BASE64 with this value:"
+            base64 -w 0 android/app/release-key.jks
+            echo ""
+            echo "--- END OF CODE ---"
+          else
+            echo "Using existing keystore from Secrets..."
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release-key.jks
+          fi
+
+      - name: Configure Gradle Signing & Versioning
+        env:
+          KEYSTORE_PASSWORD: "mihrab2026"
+          KEY_ALIAS: "mihrab-alias"
+          KEY_PASSWORD: "mihrab2026"
         run: |
           GRADLE_FILE="android/app/build.gradle"
-          
-          # إنشاء مفتاح توقيع (Keystore) ثابت لضمان تطابق التوقيع في كل تحديث
-          keytool -genkey -v -keystore my-release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias my-alias -storepass password -keypass password -dname "CN=Sanctuary, OU=Dev, O=Sanctuary, L=City, S=State, C=US"
-          mv my-release-key.jks android/app/
-          
-          # حقن إعدادات التوقيع وزيادة رقم الإصدار برمجياً عبر بايثون لضمان الدقة
           python3 -c "
           import sys, os, re
-          content = open('$GRADLE_FILE').read()
+          gradle_path = '$GRADLE_FILE'
+          with open(gradle_path, 'r') as f:
+              content = f.read()
           
           signing_config = '''
               signingConfigs {
                   release {
-                      storeFile file('my-release-key.jks')
-                      storePassword 'password'
-                      keyAlias 'my-alias'
-                      keyPassword 'password'
+                      storeFile file('release-key.jks')
+                      storePassword \"''' + os.environ['KEYSTORE_PASSWORD'] + '''\"
+                      keyAlias \"''' + os.environ['KEY_ALIAS'] + '''\"
+                      keyPassword \"''' + os.environ['KEY_PASSWORD'] + '''\"
                   }
               }
           '''
           
           if 'signingConfigs' not in content:
-              content = content.replace('android {', 'android {' + signing_config)
+              content = content.replace('android {', 'android {\n' + signing_config)
           
-          # ربط التوقيع بالـ Debug والـ Release لضمان قبول التحديث دائماً
-          content = content.replace('buildTypes {', 'buildTypes {\n        release {\n            signingConfig signingConfigs.release\n        }\n        debug {\n            signingConfig signingConfigs.release\n        }')
+          release_config = 'signingConfig signingConfigs.release'
+          content = re.sub(r'release \{', f'release {{\n            {release_config}', content)
+          content = re.sub(r'debug \{', f'debug {{\n            {release_config}', content)
           
-          # رفع رقم الإصدار (versionCode) تلقائياً بناءً على رقم العملية في GitHub
           run_number = os.getenv('GITHUB_RUN_NUMBER', '1')
           content = re.sub(r'versionCode \d+', f'versionCode {run_number}', content)
           
-          with open('$GRADLE_FILE', 'w') as f:
+          with open(gradle_path, 'w') as f:
               f.write(content)
           "
 
-      - name: Build Android APK
+      - name: Build Release APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease
 
-      - name: Upload Debug APK
+      - name: Upload Production APK
         uses: actions/upload-artifact@v4
         with:
-          name: sanctuary-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: mihrab-production-release-${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/app-release.apk
