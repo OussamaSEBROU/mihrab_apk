@@ -3,7 +3,7 @@ name: Eternal Update & Deploy Pipeline
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # يسمح لك بتشغيل العملية يدوياً
+  workflow_dispatch:
 
 jobs:
   build:
@@ -75,35 +75,44 @@ jobs:
           KEY_ALIAS: "mihrab-alias"
           KEY_PASSWORD: "mihrab2026"
         run: |
-          GRADLE_FILE="android/app/build.gradle"
+          # استعمال بايثون لإجراء عملية جراحية دقيقة لملف Gradle
           python3 -c "
-          import sys, os, re
-          gradle_path = '$GRADLE_FILE'
-          with open(gradle_path, 'r') as f:
+          import os, re
+          
+          path = 'android/app/build.gradle'
+          with open(path, 'r') as f:
               content = f.read()
           
-          signing_config = '''
-              signingConfigs {
-                  release {
-                      storeFile file('release-key.jks')
-                      storePassword \"''' + os.environ['KEYSTORE_PASSWORD'] + '''\"
-                      keyAlias \"''' + os.environ['KEY_ALIAS'] + '''\"
-                      keyPassword \"''' + os.environ['KEY_PASSWORD'] + '''\"
-                  }
-              }
+          # 1. إعداد كتلة التوقيع بمسمى فريد لتجنب التداخل
+          signing_block = '''
+    signingConfigs {
+        mihrabSigning {
+            storeFile file('release-key.jks')
+            storePassword \"''' + os.environ['KEYSTORE_PASSWORD'] + '''\"
+            keyAlias \"''' + os.environ['KEY_ALIAS'] + '''\"
+            keyPassword \"''' + os.environ['KEY_PASSWORD'] + '''\"
+        }
+    }
           '''
           
-          if 'signingConfigs' not in content:
-              content = content.replace('android {', 'android {\n' + signing_config)
+          # حقن التوقيع بعد بداية بلوك أندرويد مباشرة
+          if 'mihrabSigning' not in content:
+              content = content.replace('android {', 'android {' + signing_block)
           
-          release_config = 'signingConfig signingConfigs.release'
-          content = re.sub(r'release \{', f'release {{\n            {release_config}', content)
-          content = re.sub(r'debug \{', f'debug {{\n            {release_config}', content)
+          # 2. ربط التوقيع بالـ Release والـ Debug داخل buildTypes فقط
+          # نستخدم التعابير النمطية لضمان الدقة
+          build_types_match = re.search(r'buildTypes\s*\{', content)
+          if build_types_match:
+              start = build_types_match.end()
+              # حقن التوقيع داخل الـ release والـ debug
+              content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
+              content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
           
+          # 3. تحديث رقم الإصدار آلياً
           run_number = os.getenv('GITHUB_RUN_NUMBER', '1')
-          content = re.sub(r'versionCode \d+', f'versionCode {run_number}', content)
+          content = re.sub(r'versionCode\s+\d+', f'versionCode {run_number}', content)
           
-          with open(gradle_path, 'w') as f:
+          with open(path, 'w') as f:
               f.write(content)
           "
 
