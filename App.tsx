@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { getGMTDateString } from './services/notificationService';
 import { useMotionValue, motion, AnimatePresence } from 'framer-motion';
 import { ViewState } from './types';
 import type { Language, Insight, Book, ShelfData } from './types';
@@ -113,16 +114,21 @@ const generateStyledCover = (bookId: string, title: string): string => {
 };
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>(ViewState.SHELF);
-  const [lang, setLang] = useState<Language>(() => {
+  // ── LANGUAGE GATEWAY STATE ──
+  const [showLanguageGateway, setShowLanguageGateway] = useState<boolean>(() => {
+    return !localStorage.getItem('sanctuary_lang_chosen');
+  });
+  const [lang, setLangRaw] = useState<Language>(() => {
     const saved = localStorage.getItem('sanctuary_lang') as Language;
-    if (!saved) {
-      // Very first time setup
-      localStorage.setItem('sanctuary_lang', 'ar');
-      localStorage.setItem('sanctuary_notif_lang', 'ar');
-      return 'ar';
-    }
+    if (!saved) return 'ar'; // Default, will be overridden by gateway
     return saved;
   });
+  // Wrapped setLang that persists to localStorage
+  const setLang = useCallback((newLang: Language) => {
+    setLangRaw(newLang);
+    localStorage.setItem('sanctuary_lang', newLang);
+    localStorage.setItem('sanctuary_notif_lang', newLang);
+  }, []);
   
   // Ensure notification language is set if it's missing (legacy support)
   useEffect(() => {
@@ -150,12 +156,6 @@ const App: React.FC = () => {
   const [activeInsightIndex, setActiveInsightIndex] = useState(0);
   const [showInsights, setShowInsights] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
-  // ── FIRST-LAUNCH LANGUAGE GATEWAY ──
-  // sanctuary_lang_selected is set ONLY after the user explicitly chooses a language
-  // on first launch. sanctuary_lang (existing key) persists the choice for subsequent sessions.
-  const [showLanguageGateway, setShowLanguageGateway] = useState<boolean>(() => {
-    return !localStorage.getItem('sanctuary_lang_selected');
-  });
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [isUiVisible, setIsUiVisible] = useState(true);
@@ -279,7 +279,7 @@ const App: React.FC = () => {
   const habitData = useMemo(() => storageService.getHabitData(), [books]);
   const habitStreak = habitData.streak;
   const totalTodayMinutes = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getGMTDateString(); // GMT-based for worldwide consistency
     return Math.floor(books.reduce((acc, b) => {
       if (b.lastReadDate === today) return acc + (b.dailyTimeSeconds || 0);
       return acc;
@@ -450,7 +450,7 @@ const App: React.FC = () => {
         author: newBookAuthor || (lang === 'ar' ? 'مؤلف مجهول' : 'Unknown Scribe'),
         cover: coverUrl,
         content: "[VISUAL_PDF_MODE]", timeSpentSeconds: 0, dailyTimeSeconds: 0,
-        lastReadDate: new Date().toISOString().split('T')[0], stars: 0,
+        lastReadDate: getGMTDateString(), stars: 0,
         addedAt: Date.now(), lastPage: 0, annotations: []
       };
       const updated = [newBook, ...books];
@@ -1483,6 +1483,162 @@ const App: React.FC = () => {
           </MotionDiv>
         )}
       </div>
+      {/* ── FIRST-LAUNCH LANGUAGE GATEWAY ── */}
+      <AnimatePresence>
+        {showLanguageGateway && (
+          <MotionDiv
+            key="lang-gateway"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5 }}
+            className="fixed inset-0 z-[20000] flex items-center justify-center bg-black"
+          >
+            {/* Ambient background */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+              <MotionDiv
+                animate={{ scale: [1, 1.4, 1], opacity: [0.05, 0.2, 0.05] }}
+                transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+                className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] h-[90vw] rounded-full bg-red-600/15 blur-[120px]"
+              />
+              <MotionDiv
+                animate={{ scale: [1.2, 1, 1.2], opacity: [0.03, 0.12, 0.03] }}
+                transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut', delay: 2 }}
+                className="absolute bottom-1/4 left-1/3 w-[70vw] h-[70vw] rounded-full bg-amber-500/8 blur-[100px]"
+              />
+            </div>
+
+            <MotionDiv
+              initial={{ scale: 0.9, y: 30 }}
+              animate={{ scale: 1, y: 0 }}
+              transition={{ delay: 0.2, type: 'spring', damping: 25 }}
+              className="relative flex flex-col items-center justify-center px-8 max-w-md w-full"
+            >
+              {/* Logo */}
+              <MotionDiv
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="mb-8"
+              >
+                <img
+                  src="/icon.png"
+                  className="w-24 h-24 rounded-[2rem] object-cover shadow-[0_0_60px_rgba(255,0,0,0.4)] border-2 border-red-600/30"
+                  alt="Sanctuary Logo"
+                />
+              </MotionDiv>
+
+              {/* Title */}
+              <MotionDiv
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.5 }}
+                className="text-center mb-2"
+              >
+                <h1 className="text-4xl font-black text-white uppercase tracking-tighter italic mb-2 font-ar">
+                  المِحْرابْ
+                </h1>
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-red-600 mb-1">SANCTUARY</p>
+              </MotionDiv>
+
+              {/* Subtitle */}
+              <MotionDiv
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.7 }}
+                className="text-center mb-12"
+              >
+                <p className="text-sm font-bold text-white/60 font-ar mb-1">اختر لغتك</p>
+                <p className="text-xs font-bold text-white/30 font-en">Choose Your Language</p>
+              </MotionDiv>
+
+              {/* Language Cards */}
+              <MotionDiv
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.9 }}
+                className="grid grid-cols-2 gap-4 w-full mb-10"
+              >
+                {/* Arabic */}
+                <button
+                  onClick={() => { setLang('ar'); }}
+                  className={`group relative flex flex-col items-center justify-center p-8 rounded-[2rem] border-2 transition-all duration-500 ${
+                    lang === 'ar'
+                      ? 'bg-white/10 border-red-600/60 shadow-[0_0_40px_rgba(255,0,0,0.15)] scale-[1.02]'
+                      : 'bg-white/[0.03] border-white/10 hover:border-white/20 hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <span className="text-3xl mb-3 font-black font-ar text-white">ع</span>
+                  <span className="text-sm font-black font-ar text-white/80">العربية</span>
+                  <span className="text-[8px] font-bold uppercase tracking-widest text-white/30 mt-1">Arabic</span>
+                  {lang === 'ar' && (
+                    <MotionDiv
+                      layoutId="lang-check"
+                      className="absolute top-3 right-3 w-5 h-5 bg-red-600 rounded-full flex items-center justify-center shadow-lg"
+                    >
+                      <Check size={12} className="text-white" />
+                    </MotionDiv>
+                  )}
+                </button>
+
+                {/* English */}
+                <button
+                  onClick={() => { setLang('en'); }}
+                  className={`group relative flex flex-col items-center justify-center p-8 rounded-[2rem] border-2 transition-all duration-500 ${
+                    lang === 'en'
+                      ? 'bg-white/10 border-red-600/60 shadow-[0_0_40px_rgba(255,0,0,0.15)] scale-[1.02]'
+                      : 'bg-white/[0.03] border-white/10 hover:border-white/20 hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <span className="text-3xl mb-3 font-black font-en text-white">En</span>
+                  <span className="text-sm font-black font-en text-white/80">English</span>
+                  <span className="text-[8px] font-bold uppercase tracking-widest text-white/30 mt-1">إنجليزي</span>
+                  {lang === 'en' && (
+                    <MotionDiv
+                      layoutId="lang-check"
+                      className="absolute top-3 right-3 w-5 h-5 bg-red-600 rounded-full flex items-center justify-center shadow-lg"
+                    >
+                      <Check size={12} className="text-white" />
+                    </MotionDiv>
+                  )}
+                </button>
+              </MotionDiv>
+
+              {/* Confirm Button */}
+              <MotionDiv
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1.1 }}
+                className="w-full"
+              >
+                <button
+                  onClick={() => {
+                    localStorage.setItem('sanctuary_lang_chosen', 'true');
+                    localStorage.setItem('sanctuary_lang', lang);
+                    localStorage.setItem('sanctuary_notif_lang', lang);
+                    setShowLanguageGateway(false);
+                  }}
+                  className="w-full py-5 rounded-2xl bg-red-600 text-white font-black text-xs uppercase tracking-[0.4em] shadow-[0_0_40px_rgba(255,0,0,0.3)] hover:bg-red-500 active:scale-95 transition-all"
+                >
+                  {lang === 'ar' ? 'ادخل المحراب' : 'Enter the Sanctuary'}
+                </button>
+              </MotionDiv>
+
+              {/* Note */}
+              <MotionDiv
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1.3 }}
+                className="mt-6 text-center"
+              >
+                <p className="text-[9px] font-bold text-white/20 uppercase tracking-widest">
+                  {lang === 'ar' ? 'يمكنك تغيير اللغة في أي وقت من القائمة الجانبية' : 'You can change the language anytime from the sidebar'}
+                </p>
+              </MotionDiv>
+            </MotionDiv>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
     </Layout>
   );
 };
