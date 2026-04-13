@@ -1,9 +1,7 @@
+
 import React, { useEffect } from 'react';
 import { App } from '@capacitor/app';
-import {
-  scheduleMotivationalNotifications,
-  scheduleSummaryNotification,   // ← جديد: إشعار الملخص الدوري
-} from '../services/notificationService';
+import { scheduleMotivationalNotifications, schedulePeriodicSummary, getGMTDateString } from '../services/notificationService';
 import { Book, Language } from '../types';
 import { storageService } from '../services/storageService';
 
@@ -16,7 +14,7 @@ interface Props {
 export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, books }: Props) => {
   useEffect(() => {
     const handleExit = async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getGMTDateString(); // GMT-based
       // Refresh books from storage to get the latest session time saved by Reader
       const latestBooks = storageService.getBooks();
 
@@ -48,7 +46,7 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
       // Get habit data for streak
       const habitData = storageService.getHabitData();
 
-      await scheduleMotivationalNotifications(notifLang, { 
+      const stats = { 
         lastSessionMins,
         todayMins,
         totalMins,
@@ -56,20 +54,19 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
         totalBooks: latestBooks.length,
         bookBreakdown,
         streak: habitData.streak
-      });
+      };
 
-      // ── ② التحليل الذكي: توليد وإرسال ملخص كل ٤٨ ساعة ──────────────────────
-      // يُفحص الشرط الزمني عبر storageService.shouldGenerateSummary قبل الإرسال
-      if (storageService.shouldGenerateSummary('48h')) {
-        const summary48h = storageService.buildAndStoreSummary('48h');
-        await scheduleSummaryNotification(notifLang, summary48h, '48h');
-      }
+      // Schedule motivational notifications (with contextual intensity)
+      await scheduleMotivationalNotifications(notifLang, stats);
 
-      // ── ② التحليل الذكي: توليد وإرسال الملخص الأسبوعي ──────────────────────
-      if (storageService.shouldGenerateSummary('weekly')) {
-        const summaryWeekly = storageService.buildAndStoreSummary('weekly');
-        await scheduleSummaryNotification(notifLang, summaryWeekly, 'weekly');
+      // Schedule periodic summaries (48h + weekly) if due
+      if (storageService.shouldRegenerateSummary('48h')) {
+        storageService.generateAnalyticsSummary('48h');
       }
+      if (storageService.shouldRegenerateSummary('weekly')) {
+        storageService.generateAnalyticsSummary('weekly');
+      }
+      await schedulePeriodicSummary(notifLang, stats);
     };
 
     const listener = App.addListener('appStateChange', ({ isActive }) => {
@@ -82,6 +79,29 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
       listener.then(l => l.remove());
     };
   }, [lang, books]);
+
+  // ── AUTO-GENERATE ANALYTICS ON MOUNT ──
+  useEffect(() => {
+    // Generate initial analytics if none exist
+    if (storageService.shouldRegenerateSummary('48h')) {
+      storageService.generateAnalyticsSummary('48h');
+    }
+    if (storageService.shouldRegenerateSummary('weekly')) {
+      storageService.generateAnalyticsSummary('weekly');
+    }
+    
+    // Set up periodic regeneration check (every 30 minutes)
+    const interval = setInterval(() => {
+      if (storageService.shouldRegenerateSummary('48h')) {
+        storageService.generateAnalyticsSummary('48h');
+      }
+      if (storageService.shouldRegenerateSummary('weekly')) {
+        storageService.generateAnalyticsSummary('weekly');
+      }
+    }, 30 * 60 * 1000);
+    
+    return () => clearInterval(interval);
+  }, []);
 
   return null;
 };
