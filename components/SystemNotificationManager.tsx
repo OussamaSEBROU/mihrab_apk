@@ -1,6 +1,9 @@
 import React, { useEffect } from 'react';
 import { App } from '@capacitor/app';
-import { scheduleMotivationalNotifications } from '../services/notificationService';
+import {
+  scheduleMotivationalNotifications,
+  scheduleSummaryNotification,   // ← جديد: إشعار الملخص الدوري
+} from '../services/notificationService';
 import { Book, Language } from '../types';
 import { storageService } from '../services/storageService';
 
@@ -54,6 +57,19 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
         bookBreakdown,
         streak: habitData.streak
       });
+
+      // ── ② التحليل الذكي: توليد وإرسال ملخص كل ٤٨ ساعة ──────────────────────
+      // يُفحص الشرط الزمني عبر storageService.shouldGenerateSummary قبل الإرسال
+      if (storageService.shouldGenerateSummary('48h')) {
+        const summary48h = storageService.buildAndStoreSummary('48h');
+        await scheduleSummaryNotification(notifLang, summary48h, '48h');
+      }
+
+      // ── ② التحليل الذكي: توليد وإرسال الملخص الأسبوعي ──────────────────────
+      if (storageService.shouldGenerateSummary('weekly')) {
+        const summaryWeekly = storageService.buildAndStoreSummary('weekly');
+        await scheduleSummaryNotification(notifLang, summaryWeekly, 'weekly');
+      }
     };
 
     const listener = App.addListener('appStateChange', ({ isActive }) => {
