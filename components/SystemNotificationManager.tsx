@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import { App } from '@capacitor/app';
 import { scheduleMotivationalNotifications } from '../services/notificationService';
