@@ -3,6 +3,17 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 import type { Book, FlashCard, ShelfData, Annotation, HabitData } from '../types';
 
+// ===== GMT DATE STANDARDIZATION =====
+// All day-boundary transitions are computed in UTC/GMT to ensure global consistency
+// across timezones. This prevents the "day rollover mismatch" bug for users in GMT+/GMT- zones.
+export const getGMTDateString = (): string => {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(now.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 const STORAGE_KEYS = {
   BOOKS: 'sanctuary_books',
   SHELVES: 'sanctuary_shelves',
@@ -105,7 +116,7 @@ export const storageService = {
     let starReached: number | null = null;
 
     if (index !== -1) {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getGMTDateString();
       const book = books[index];
       const oldStars = book.stars || 0;
 
@@ -177,10 +188,10 @@ export const storageService = {
   },
 
   recordReadingDay: () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getGMTDateString();
     const books = storageService.getBooks();
     const totalTodaySeconds = books.reduce((acc, b) => {
-      const bDate = b.lastReadDate || (b.lastReadAt ? new Date(b.lastReadAt).toISOString().split('T')[0] : '');
+      const bDate = b.lastReadDate || (b.lastReadAt ? (() => { const d = new Date(b.lastReadAt!); return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`; })() : '');
       if (bDate === today) return acc + (b.dailyTimeSeconds || 0);
       return acc;
     }, 0);
@@ -248,5 +259,75 @@ export const storageService = {
       }
     }
     storageService.saveHabitData(habit);
+  },
+
+  // ===== SMART ANALYTICS: PERIODIC SUMMARY STORAGE =====
+  // Stores snapshot data every 48 hours and weekly for the Smart Analytics section.
+
+  getAnalyticsSummaries: (): { h48: any[]; weekly: any[] } => {
+    try {
+      const raw = localStorage.getItem('sanctuary_analytics_summaries');
+      return raw ? JSON.parse(raw) : { h48: [], weekly: [] };
+    } catch { return { h48: [], weekly: [] }; }
+  },
+
+  saveAnalyticsSummaries: (data: { h48: any[]; weekly: any[] }) => {
+    localStorage.setItem('sanctuary_analytics_summaries', JSON.stringify(data));
+  },
+
+  buildAndStoreSummary: (period: '48h' | 'weekly'): any => {
+    const books = storageService.getBooks();
+    const shelves = storageService.getShelves();
+    const habit = storageService.getHabitData();
+    const now = Date.now();
+
+    // Total minutes in the period window
+    const windowMs = period === '48h' ? 48 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+    const windowStart = now - windowMs;
+
+    const activeShelves = shelves.filter(shelf =>
+      books.some(b => b.shelfId === shelf.id && b.lastReadAt && b.lastReadAt >= windowStart)
+    ).map(s => s.name);
+
+    const topBooks = books
+      .filter(b => b.lastReadAt && b.lastReadAt >= windowStart)
+      .sort((a, b) => (b.dailyTimeSeconds || 0) - (a.dailyTimeSeconds || 0))
+      .slice(0, 3)
+      .map(b => ({ title: b.title, mins: Math.floor((b.dailyTimeSeconds || 0) / 60), stars: b.stars || 0 }));
+
+    const totalMins = Math.floor(
+      books.reduce((acc, b) => acc + (b.lastReadAt && b.lastReadAt >= windowStart ? (b.dailyTimeSeconds || 0) : 0), 0) / 60
+    );
+
+    const summary = {
+      period,
+      generatedAt: now,
+      generatedDateGMT: getGMTDateString(),
+      totalMins,
+      topBooks,
+      activeShelves,
+      streak: habit.streak,
+      totalStars: books.reduce((acc, b) => acc + (b.stars || 0), 0),
+    };
+
+    const store = storageService.getAnalyticsSummaries();
+    if (period === '48h') {
+      store.h48.unshift(summary);
+      if (store.h48.length > 10) store.h48 = store.h48.slice(0, 10); // keep last 10
+    } else {
+      store.weekly.unshift(summary);
+      if (store.weekly.length > 8) store.weekly = store.weekly.slice(0, 8); // keep last 8 weeks
+    }
+    storageService.saveAnalyticsSummaries(store);
+    return summary;
+  },
+
+  shouldGenerateSummary: (period: '48h' | 'weekly'): boolean => {
+    const store = storageService.getAnalyticsSummaries();
+    const list = period === '48h' ? store.h48 : store.weekly;
+    if (list.length === 0) return true;
+    const lastTs = list[0].generatedAt as number;
+    const thresholdMs = period === '48h' ? 48 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+    return Date.now() - lastTs >= thresholdMs;
   }
 };
