@@ -150,6 +150,12 @@ const App: React.FC = () => {
   const [activeInsightIndex, setActiveInsightIndex] = useState(0);
   const [showInsights, setShowInsights] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // ── FIRST-LAUNCH LANGUAGE GATEWAY ──
+  // sanctuary_lang_selected is set ONLY after the user explicitly chooses a language
+  // on first launch. sanctuary_lang (existing key) persists the choice for subsequent sessions.
+  const [showLanguageGateway, setShowLanguageGateway] = useState<boolean>(() => {
+    return !localStorage.getItem('sanctuary_lang_selected');
+  });
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [isUiVisible, setIsUiVisible] = useState(true);
