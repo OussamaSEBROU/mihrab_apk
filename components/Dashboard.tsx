@@ -130,6 +130,150 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
         </div>
       </header>
 
+      {/* SECTION: SMART ANALYTICS SUMMARY */}
+      {(() => {
+        const summary48h = storageService.getAnalyticsSummary('48h');
+        const summaryWeekly = storageService.getAnalyticsSummary('weekly');
+        const hasSummary = summary48h || summaryWeekly;
+        
+        // Auto-generate if missing
+        if (!summary48h && books.length > 0) {
+          storageService.generateAnalyticsSummary('48h');
+        }
+        if (!summaryWeekly && books.length > 0) {
+          storageService.generateAnalyticsSummary('weekly');
+        }
+        
+        const activeSummary = summary48h || summaryWeekly;
+        
+        return (
+          <section className="bg-gradient-to-br from-red-600/[0.06] via-white/[0.02] to-white/[0.01] border border-red-600/20 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-6 shadow-4xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
+              <BarChart3 size={200} />
+            </div>
+            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-red-600/20 rounded-xl border border-red-600/30">
+                  <BarChart3 className="text-red-500 size-5 md:size-8" />
+                </div>
+                <div>
+                  <h3 className="text-lg md:text-4xl font-black uppercase tracking-tighter italic">
+                    {isRTL ? 'التحليل الذكي' : 'Smart Analytics'}
+                  </h3>
+                  <p className="text-[8px] md:text-xs uppercase font-bold tracking-widest text-white/30 mt-1">
+                    {isRTL ? 'التقارير الاستخباراتية الدورية' : 'Periodic Intelligence Reports'}
+                  </p>
+                </div>
+              </div>
+              
+              {activeSummary && (
+                <div className="flex items-center gap-2 bg-red-600/10 px-4 py-2 rounded-full border border-red-600/20">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-[8px] font-black uppercase tracking-widest text-red-500">
+                    {isRTL ? 'آخر تحديث: ' : 'Last Updated: '}
+                    {activeSummary ? new Date(activeSummary.generatedAt).toLocaleDateString(isRTL ? 'ar-EG' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            {!hasSummary || !activeSummary ? (
+              <div className="h-[150px] flex items-center justify-center text-white/20 uppercase font-black tracking-widest text-[10px] italic relative z-10">
+                {isRTL ? 'سيتم توليد التحليلات بعد جلسات القراءة الأولى' : 'Analytics will be generated after your first reading sessions'}
+              </div>
+            ) : (
+              <div className="space-y-6 relative z-10">
+                {/* Summary Cards Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+                  <div className="p-4 md:p-6 bg-black/40 border border-white/5 rounded-2xl md:rounded-3xl text-center">
+                    <Clock className="text-red-500 size-4 md:size-5 mx-auto mb-2" />
+                    <p className="text-[7px] font-black uppercase tracking-widest text-white/30 mb-1">
+                      {isRTL ? 'دقائق القراءة' : 'Reading Minutes'}
+                    </p>
+                    <p className="text-2xl md:text-3xl font-black text-white italic">{activeSummary.totalMinutes}</p>
+                  </div>
+                  <div className="p-4 md:p-6 bg-black/40 border border-white/5 rounded-2xl md:rounded-3xl text-center">
+                    <Star className="text-amber-500 fill-amber-500 size-4 md:size-5 mx-auto mb-2" />
+                    <p className="text-[7px] font-black uppercase tracking-widest text-white/30 mb-1">
+                      {isRTL ? 'إجمالي النجوم' : 'Total Stars'}
+                    </p>
+                    <p className="text-2xl md:text-3xl font-black text-white italic">{activeSummary.totalStars}</p>
+                  </div>
+                  <div className="p-4 md:p-6 bg-black/40 border border-white/5 rounded-2xl md:rounded-3xl text-center">
+                    <Zap className="text-emerald-500 size-4 md:size-5 mx-auto mb-2" />
+                    <p className="text-[7px] font-black uppercase tracking-widest text-white/30 mb-1">
+                      {isRTL ? 'سلسلة الالتزام' : 'Streak'}
+                    </p>
+                    <p className="text-2xl md:text-3xl font-black text-white italic">{activeSummary.streak}<span className="text-xs text-white/30 ml-1">{isRTL ? 'يوم' : 'd'}</span></p>
+                  </div>
+                  <div className="p-4 md:p-6 bg-black/40 border border-white/5 rounded-2xl md:rounded-3xl text-center">
+                    <BookOpen className="text-blue-500 size-4 md:size-5 mx-auto mb-2" />
+                    <p className="text-[7px] font-black uppercase tracking-widest text-white/30 mb-1">
+                      {isRTL ? 'إجمالي الكتب' : 'Total Books'}
+                    </p>
+                    <p className="text-2xl md:text-3xl font-black text-white italic">{activeSummary.totalBooks}</p>
+                  </div>
+                </div>
+                
+                {/* Top Books */}
+                {activeSummary.topBooks.length > 0 && (
+                  <div className="p-5 md:p-8 bg-black/30 border border-white/5 rounded-2xl md:rounded-3xl">
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mb-4 flex items-center gap-2">
+                      <BookOpen size={12} className="text-red-500" />
+                      {isRTL ? 'الكتب الأكثر قراءة' : 'Most Read Books'}
+                    </h4>
+                    <div className="space-y-3">
+                      {activeSummary.topBooks.map((book, i) => (
+                        <div key={i} className="flex items-center gap-3 group">
+                          <div className="w-6 h-6 rounded-lg bg-white/5 flex items-center justify-center border border-white/10 group-hover:border-red-600/30 transition-all">
+                            <span className="text-[8px] font-black text-white/40">{i + 1}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-black text-white/80 truncate uppercase tracking-wider">{book.title}</p>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className="text-[9px] font-black text-white/40">{book.minutes}m</span>
+                            <div className="flex items-center gap-0.5">
+                              <Star size={8} className="text-red-600 fill-red-600" />
+                              <span className="text-[9px] font-black text-red-600">{book.stars}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Active Shelves */}
+                {activeSummary.activeShelves.length > 0 && (
+                  <div className="p-5 md:p-8 bg-black/30 border border-white/5 rounded-2xl md:rounded-3xl">
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mb-4 flex items-center gap-2">
+                      <Activity size={12} className="text-emerald-500" />
+                      {isRTL ? 'الأرفف النشطة' : 'Active Shelves'}
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {activeSummary.activeShelves.map((shelf, i) => (
+                        <div key={i} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 hover:border-emerald-500/20 transition-all">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            <span className="text-[9px] font-black uppercase tracking-widest text-white/60 truncate max-w-[120px]">{shelf.name}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[8px] font-bold text-white/30">{shelf.bookCount} {isRTL ? 'كتاب' : 'books'}</span>
+                            <span className="text-[8px] font-black text-emerald-500">{shelf.totalMinutes}m</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        );
+      })()}
+
       {/* SECTION 0: HABIT FORMATION PATH (NEW) */}
       <section className="bg-white/[0.02] border border-white/10 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-8 shadow-4xl relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-[0.02] pointer-events-none">
