@@ -23,6 +23,70 @@ const STAR_THRESHOLDS = [900, 1800, 3000, 8400, 12000, 15600, 19200];
 
 let _booksCache: Book[] | null = null;
 let _shelvesCache: ShelfData[] | null = null;
+let _recoveryAttempted = false; // لمنع تكرار محاولة الاستعادة
+
+// ===================================================================
+// AUTO-RECOVERY ENGINE — استعادة البيانات من النسخ الاحتياطي
+// يعمل مرة واحدة عند تشغيل التطبيق إذا وجد أن البيانات مفقودة
+// ===================================================================
+const attemptBookRecovery = async (): Promise<Book[]> => {
+  if (_recoveryAttempted) return [];
+  _recoveryAttempted = true;
+
+  try {
+    if (!Capacitor.isNativePlatform()) return [];
+
+    console.log('🔍 محاولة استعادة الكتب من النسخة الاحتياطية...');
+
+    const result = await Filesystem.readFile({
+      path: 'backup_books.json',
+      directory: Directory.Data,
+      encoding: 'utf8' as any
+    });
+
+    if (result.data && typeof result.data === 'string') {
+      const recovered: Book[] = JSON.parse(result.data);
+      if (Array.isArray(recovered) && recovered.length > 0) {
+        // استعادة ناجحة — حفظ في localStorage فوراً
+        localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(recovered));
+        console.log(`✅ تم استعادة ${recovered.length} كتاب من النسخة الاحتياطية!`);
+        return recovered.map(b => ({
+          ...b,
+          shelfId: b.shelfId || 'default',
+          annotations: b.annotations || []
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ لا يوجد ملف نسخة احتياطية للكتب أو فشلت القراءة:', e);
+  }
+  return [];
+};
+
+const attemptShelfRecovery = async (): Promise<ShelfData[]> => {
+  try {
+    if (!Capacitor.isNativePlatform()) return [];
+
+    const result = await Filesystem.readFile({
+      path: 'backup_shelves.json',
+      directory: Directory.Data,
+      encoding: 'utf8' as any
+    });
+
+    if (result.data && typeof result.data === 'string') {
+      const recovered: ShelfData[] = JSON.parse(result.data);
+      if (Array.isArray(recovered) && recovered.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.SHELVES, JSON.stringify(recovered));
+        console.log(`✅ تم استعادة ${recovered.length} رف من النسخة الاحتياطية!`);
+        return recovered;
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ لا يوجد ملف نسخة احتياطية للرفوف:', e);
+  }
+  return [];
+};
+
 
 // ===== GMT-BASED DATE FUNCTION =====
 // Standardizes all day-boundary logic to GMT for worldwide consistency
@@ -341,5 +405,60 @@ export const storageService = {
     const elapsed = now - summary.generatedAt;
     const threshold = period === '48h' ? 48 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
     return elapsed >= threshold;
+  },
+
+  // ===================================================================
+  // EMERGENCY RECOVERY — استعادة البيانات من النسخ الاحتياطي
+  // تُستدعى مرة واحدة عند تشغيل التطبيق لإنقاذ البيانات المفقودة
+  // ===================================================================
+  attemptRecovery: async (): Promise<{ booksRecovered: number; shelvesRecovered: number }> => {
+    let booksRecovered = 0;
+    let shelvesRecovered = 0;
+
+    // ── فحص الكتب ──
+    const currentBooks = localStorage.getItem(STORAGE_KEYS.BOOKS);
+    const parsedBooks = currentBooks ? JSON.parse(currentBooks) : [];
+    
+    if (!Array.isArray(parsedBooks) || parsedBooks.length === 0) {
+      console.log('🚨 لا توجد كتب في localStorage — بدء محاولة الاستعادة...');
+      const recovered = await attemptBookRecovery();
+      if (recovered.length > 0) {
+        _booksCache = recovered;
+        booksRecovered = recovered.length;
+      }
+    } else {
+      console.log(`📚 الكتب سليمة: ${parsedBooks.length} كتاب موجود`);
+    }
+
+    // ── فحص الرفوف ──
+    const currentShelves = localStorage.getItem(STORAGE_KEYS.SHELVES);
+    const parsedShelves = currentShelves ? JSON.parse(currentShelves) : [];
+    
+    if (!Array.isArray(parsedShelves) || parsedShelves.length === 0) {
+      console.log('🚨 لا توجد رفوف في localStorage — بدء محاولة الاستعادة...');
+      const recovered = await attemptShelfRecovery();
+      if (recovered.length > 0) {
+        _shelvesCache = recovered;
+        shelvesRecovered = recovered.length;
+      }
+    }
+
+    // ── فحص بيانات العادات ──
+    const habitData = localStorage.getItem(STORAGE_KEYS.HABIT);
+    if (!habitData) {
+      console.log('🚨 بيانات العادات مفقودة — إعادة التهيئة...');
+      storageService.saveHabitData({
+        history: [], missedDays: [], shields: 2, streak: 0,
+        lastUpdated: '', consecutiveFullDays: 0
+      });
+    }
+
+    if (booksRecovered > 0 || shelvesRecovered > 0) {
+      console.log(`🏛️ === نتيجة الاستعادة: ${booksRecovered} كتاب + ${shelvesRecovered} رف ===`);
+    } else {
+      console.log('✅ جميع البيانات سليمة — لا حاجة للاستعادة');
+    }
+
+    return { booksRecovered, shelvesRecovered };
   }
 };
