@@ -435,21 +435,13 @@ export const scheduleMotivationalNotifications = async (lang: 'ar' | 'en', stats
     });
 
     // ===================================================================
-    // SEQUENCE 2: HALF-HOURLY PROFESSIONAL NOTIFICATIONS
-    // تنبيهات كل نصف ساعة — أكثر كثافة في حالة الأداء المنخفض
+    // SEQUENCE 2A: كل نصف ساعة — ثلاث مقولات حكمية متتالية
+    // Three scholarly quotes every 30 minutes (for 12 hours = 24 batches)
     // ===================================================================
 
-    // Determine notification frequency based on intensity
-    const intervalMinutes = intensity === 'critical' ? 20 : intensity === 'high' ? 25 : 30;
-    const totalSlots = intensity === 'critical' ? 16 : intensity === 'high' ? 14 : 12;
-
-    const halfHourlyTypes = (() => {
-      const base = ['summary', 'quote', 'books', 'cumulative', 'quote', 'motivation', 'quote', 'summary', 'quote', 'books', 'cumulative', 'quote'];
-      if (intensity === 'critical' || intensity === 'high') {
-        return [...base, 'motivation', 'quote', 'summary', 'quote'];
-      }
-      return base;
-    })();
+    const QUOTE_INTERVAL_MS = 30 * 60 * 1000; // 30 دقيقة
+    const QUOTE_BATCHES = 24; // 12 ساعة = 24 دفعة
+    const QUOTES_PER_BATCH = 3; // 3 مقولات في كل دفعة
 
     const usedQuoteIndices: number[] = [];
     const getUniqueQuote = (): typeof quotes[0] => {
@@ -461,53 +453,81 @@ export const scheduleMotivationalNotifications = async (lang: 'ar' | 'en', stats
       return quotes[index];
     };
 
-    for (let i = 0; i < Math.min(halfHourlyTypes.length, totalSlots); i++) {
-      const type = halfHourlyTypes[i];
-      const delay = (i + 1) * intervalMinutes * 60 * 1000;
+    for (let batch = 0; batch < QUOTE_BATCHES; batch++) {
+      const batchBaseDelay = (batch + 1) * QUOTE_INTERVAL_MS;
+      for (let q = 0; q < QUOTES_PER_BATCH; q++) {
+        const quote = getUniqueQuote();
+        // الفجوة بين المقولات الثلاث داخل نفس الدفعة: دقيقة واحدة بينهما
+        const quoteDelay = batchBaseDelay + q * 60 * 1000;
+        notifications.push({
+          id: ++notifId,
+          title: isAR ? '🕯️ تأمُّلٌ في المحراب' : '🕯️ Sanctuary Contemplation',
+          body: isAR ? quote.ar : quote.en,
+          smallIcon: 'ic_stat_icon',
+          largeIcon: 'ic_launcher',
+          iconColor: '#ff0000',
+          schedule: { at: new Date(now + quoteDelay), allowWhileIdle: true }
+        });
+      }
+    }
+
+    // ===================================================================
+    // SEQUENCE 2B: كل 3 ساعات — إشعار إحصائي شامل (إحصائيات + كتب + رصيد)
+    // Comprehensive stats notification every 3 hours (for 12 hours = 4 batches)
+    // ===================================================================
+
+    const STATS_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 ساعات
+    const STATS_BATCHES = 4; // 4 دفعات تغطي 12 ساعة
+
+    // تسلسل الإشعارات الإحصائية الدورية
+    const statsSequence = ['summary', 'books', 'cumulative', 'motivation'];
+
+    for (let s = 0; s < STATS_BATCHES; s++) {
+      const statsDelay = (s + 1) * STATS_INTERVAL_MS;
+      const type = statsSequence[s % statsSequence.length];
       let title = '';
       let body = '';
+      const totalH = (stats.totalMins / 60).toFixed(1);
 
       switch (type) {
         case 'summary': {
-          title = isAR ? '📊 ملخص أدائك المعرفي' : '📊 Knowledge Performance Summary';
+          // ملخص الأداء + عدد الكتب + دقائق اليوم
+          title = isAR ? '📊 تقرير المحراب الشامل' : '📊 Sanctuary Comprehensive Report';
           body = isAR
-            ? `استثمرت ${stats.todayMins} دقيقة اليوم في القراءة المركزة. محرابك يضم ${stats.totalBooks} مجلد. كل صفحة تقرؤها تُعيد تشكيل عقلك.`
-            : `You invested ${stats.todayMins} minutes today in focused reading. Your sanctuary holds ${stats.totalBooks} volumes. Every page restructures your mind.`;
-          break;
-        }
-        case 'quote': {
-          const quote = getUniqueQuote();
-          title = isAR ? '🕯️ تأمُّلٌ في المحراب' : '🕯️ Sanctuary Contemplation';
-          body = isAR ? quote.ar : quote.en;
+            ? `📖 دقائق اليوم: ${stats.todayMins} دقيقة\n📚 عدد الكتب في مكتبتك: ${stats.totalBooks} مجلد\n⭐ النجوم المكتسبة: ${stats.totalStars}\n🔥 سلسلة الالتزام: ${stats.streak} يوم متواصل`
+            : `📖 Today: ${stats.todayMins} min\n📚 Library: ${stats.totalBooks} volumes\n⭐ Stars: ${stats.totalStars}\n🔥 Streak: ${stats.streak} days`;
           break;
         }
         case 'books': {
+          // نداء الكتب مع الإحصائيات
           if (stats.bookBreakdown.length > 0) {
             const randomBook = stats.bookBreakdown[Math.floor(Math.random() * stats.bookBreakdown.length)];
-            title = isAR ? '📚 نداء المخطوطات' : '📚 The Manuscripts Calling';
+            title = isAR ? '📚 نداء المخطوطات — مكتبتك بانتظارك' : '📚 Your Library Awaits';
             body = isAR
-              ? `كتاب "${randomBook.title}" ينتظرك. قضيت فيه ${randomBook.mins} دقيقة حتى الآن — الحكمة لا تنضب لمن يواصل.`
-              : `"${randomBook.title}" awaits you. You've spent ${randomBook.mins} minutes so far — wisdom never runs dry for those who persist.`;
+              ? `كتاب "${randomBook.title}" ينتظرك (${randomBook.mins} دقيقة سابقة).\n📚 محرابك يحتوي على ${stats.totalBooks} مجلد | ⭐ ${stats.totalStars} نجمة | 🏛️ ${totalH} ساعة تراكمية.`
+              : `"${randomBook.title}" awaits (${randomBook.mins} min read).\n📚 Library: ${stats.totalBooks} | ⭐ ${stats.totalStars} stars | 🏛️ ${totalH}h total.`;
           } else {
-            const quote = getUniqueQuote();
-            title = isAR ? '📚 ابدأ رحلتك الفكرية' : '📚 Begin Your Intellectual Journey';
-            body = isAR ? quote.ar : quote.en;
+            title = isAR ? '📚 ابدأ رحلتك الفكرية' : '📚 Begin Your Journey';
+            body = isAR
+              ? `محرابك يحتوي على ${stats.totalBooks} مجلد ينتظر عقلك. كل قراءة هي لبنة في صرح وعيك المتين.`
+              : `Your sanctuary holds ${stats.totalBooks} volumes awaiting your mind. Every reading session builds your intellectual monument.`;
           }
           break;
         }
         case 'cumulative': {
-          const totalH = (stats.totalMins / 60).toFixed(1);
-          title = isAR ? '🏛️ رصيدك التراكمي' : '🏛️ Cumulative Capital';
+          // الرصيد التراكمي الكامل
+          title = isAR ? '🏛️ رصيدك المعرفي التراكمي' : '🏛️ Your Cumulative Knowledge Capital';
           body = isAR
-            ? `مجموع ساعات التأمل الفكري: ${totalH} ساعة | النجوم: ${stats.totalStars} | سلسلة الالتزام: ${stats.streak} يوم. أنت من الـ 3% الذين يصنعون الفرق.`
-            : `Total intellectual hours: ${totalH}h | Stars: ${stats.totalStars} | Streak: ${stats.streak} days. You are among the 3% who make the difference.`;
+            ? `🏛️ الرصيد التراكمي: ${totalH} ساعة من التأمل والمعرفة\n⭐ النجوم: ${stats.totalStars} | 📚 الكتب: ${stats.totalBooks}\n🔥 يوم ${stats.streak} من رحلتك المعرفية — أنت من الـ 3% الذين يصنعون الفرق.`
+            : `🏛️ Capital: ${totalH}h | ⭐ Stars: ${stats.totalStars} | 📚 Books: ${stats.totalBooks}\n🔥 Day ${stats.streak} of your journey — you are among the 3% who make the difference.`;
           break;
         }
         case 'motivation': {
-          title = isAR ? '🔥 إشعال الحماس' : '🔥 Igniting Passion';
+          // تحفيز مع إحصائيات
+          title = isAR ? '🔥 لحظة النخبة المعرفية' : '🔥 Elite Knowledge Moment';
           body = isAR
-            ? `تذكّر: القراءة ليست هواية، بل هي تمرين يومي لعضلة الحكمة. استمر في بناء صرح معرفتك، فالعالَمُ بحاجة إلى عقلك المستنير.`
-            : `Remember: Reading is not a hobby — it is daily exercise for the wisdom muscle. Keep building your knowledge monument. The world needs your enlightened mind.`;
+            ? `القراءة ليست هواية — هي تمرين يومي لعضلة الحكمة.\n📖 اليوم: ${stats.todayMins} دقيقة | 📚 ${stats.totalBooks} كتاب | 🏛️ ${totalH} ساعة تراكمية.\nالعالَمُ بحاجة إلى عقلك المستنير — عُد الآن.`
+            : `Reading is not a hobby — it is daily exercise for the wisdom muscle.\n📖 Today: ${stats.todayMins} min | 📚 ${stats.totalBooks} books | 🏛️ ${totalH}h total.\nThe world needs your enlightened mind — return now.`;
           break;
         }
       }
@@ -519,7 +539,7 @@ export const scheduleMotivationalNotifications = async (lang: 'ar' | 'en', stats
         smallIcon: 'ic_stat_icon',
         largeIcon: 'ic_launcher',
         iconColor: '#ff0000',
-        schedule: { at: new Date(now + delay), allowWhileIdle: true }
+        schedule: { at: new Date(now + statsDelay), allowWhileIdle: true }
       });
     }
 
