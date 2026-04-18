@@ -268,10 +268,27 @@ const App: React.FC = () => {
     setupMobile(view, setView);
   }, [view]);
   useEffect(() => {
-    const loadedBooks = storageService.getBooks();
-    const loadedShelves = storageService.getShelves();
-    setBooks(loadedBooks);
-    setShelves(loadedShelves);
+    const initData = async () => {
+      // 🚨 محرك الاستعادة الجراحي: يحاول استعادة البيانات إذا كان الـ localStorage فارغاً
+      const recoveryResult = await storageService.attemptRecovery();
+      
+      const loadedBooks = storageService.getBooks();
+      const loadedShelves = storageService.getShelves();
+      
+      setBooks(loadedBooks);
+      setShelves(loadedShelves);
+
+      // إشعار المستخدم في حال نجاح الاستعادة لإعادة الطمأنينة
+      if (recoveryResult.booksRecovered > 0) {
+        setToastMessage({
+          text: `✅ تم استعادة ${recoveryResult.booksRecovered} كتاب بنجاح!`,
+          detail: 'لقد استرجعنا بياناتك من النسخة الاحتياطية الآمنة.',
+          type: 'success'
+        });
+      }
+    };
+
+    initData();
   }, []);
   const t = (translations as any)[lang];
   const filteredBooks = useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
