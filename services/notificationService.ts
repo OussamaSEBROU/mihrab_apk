@@ -533,6 +533,137 @@ export const scheduleMotivationalNotifications = async (lang: 'ar' | 'en', stats
 // PERIODIC SUMMARY NOTIFICATIONS (48h + Weekly)
 // نظام التحليل الذكي والحوصلة الدورية
 // ===================================================================
+// ===================================================================
+// SMART RE-ENGAGEMENT SYSTEM (8+ Hours Inactivity Detection)
+// منظومة إعادة التفاعل الذكية — تُكثّف الإشعارات عند الغياب لأكثر من 8 ساعات
+// ===================================================================
+export const scheduleReengagementNotifications = async (
+  lang: 'ar' | 'en',
+  stats: NotificationStats,
+  inactiveHours: number
+) => {
+  // Only activate if inactive for 8+ consecutive hours
+  if (inactiveHours < 8) return;
+
+  try {
+    const hasPermission = await LocalNotifications.checkPermissions();
+    if (hasPermission.display !== 'granted') return;
+
+    const isAR = lang === 'ar';
+    const now = Date.now();
+    const notifications: any[] = [];
+    const quotes = getQuotesForLanguage(lang);
+    let notifId = 8000;
+
+    // Determine escalation tier based on inactivity duration
+    const tier = inactiveHours >= 48 ? 'critical' 
+               : inactiveHours >= 24 ? 'high' 
+               : 'moderate'; // 8-24h
+
+    // Notification intervals (minutes) — tighter for longer absence
+    const intervalMins = tier === 'critical' ? 15 : tier === 'high' ? 20 : 30;
+    const totalSlots = tier === 'critical' ? 12 : tier === 'high' ? 8 : 5;
+
+    // ── IMMEDIATE RE-ENGAGEMENT ALERT ──
+    const inactiveHoursRounded = Math.floor(inactiveHours);
+    notifications.push({
+      id: ++notifId,
+      title: isAR ? '🏛️ المحراب يتذكرك' : '🏛️ The Sanctuary Remembers You',
+      body: isAR
+        ? `مضى ${inactiveHoursRounded} ساعة منذ آخر جلسة قراءة. مخطوطاتك تنتظرك — دقيقتان فقط تكفي لإشعال شعلة الحكمة من جديد.`
+        : `${inactiveHoursRounded} hours since your last session. Your manuscripts await — just 2 minutes can reignite the flame of wisdom.`,
+      smallIcon: 'ic_stat_icon',
+      largeIcon: 'ic_launcher',
+      iconColor: '#ff0000',
+      schedule: { at: new Date(now + 30 * 1000), allowWhileIdle: true }
+    });
+
+    // ── STREAK URGENCY (if streak exists) ──
+    if (stats.streak > 0) {
+      notifications.push({
+        id: ++notifId,
+        title: isAR ? '🚨 سلسلة الالتزام في خطر!' : '🚨 Your Streak is at Risk!',
+        body: isAR
+          ? `سلسلة ${stats.streak} يوماً من القراءة المتواصلة مهددة بالانكسار. عُد الآن قبل فوات الأوان — حافظ على إرثك الفكري.`
+          : `Your ${stats.streak}-day reading streak is in danger. Return now before it's too late — protect your intellectual legacy.`,
+        smallIcon: 'ic_stat_icon',
+        largeIcon: 'ic_launcher',
+        iconColor: '#ff0000',
+        schedule: { at: new Date(now + 2 * 60 * 1000), allowWhileIdle: true }
+      });
+    }
+
+    // ── INTENSIFIED SCHOLARLY REFERENCES SEQUENCE ──
+    const usedIndices: number[] = [];
+    const getUniqueQuote = (): typeof quotes[0] => {
+      let index: number;
+      do {
+        index = Math.floor(Math.random() * quotes.length);
+      } while (usedIndices.includes(index) && usedIndices.length < quotes.length);
+      usedIndices.push(index);
+      return quotes[index];
+    };
+
+    const reengagementTypes = tier === 'critical'
+      ? ['quote', 'motivation', 'quote', 'summary', 'quote', 'motivation', 'quote', 'urgency', 'quote', 'motivation', 'quote', 'summary']
+      : tier === 'high'
+      ? ['quote', 'motivation', 'quote', 'summary', 'quote', 'motivation', 'quote', 'urgency']
+      : ['quote', 'motivation', 'quote', 'summary', 'quote'];
+
+    for (let i = 0; i < Math.min(reengagementTypes.length, totalSlots); i++) {
+      const type = reengagementTypes[i];
+      const delay = (i + 1) * intervalMins * 60 * 1000;
+      let title = '';
+      let body = '';
+
+      switch (type) {
+        case 'quote': {
+          const quote = getUniqueQuote();
+          title = isAR ? '📜 من حدائق الحكمة' : '📜 From the Gardens of Wisdom';
+          body = isAR ? quote.ar : quote.en;
+          break;
+        }
+        case 'motivation': {
+          title = isAR ? '🔥 نداء العودة للمعرفة' : '🔥 The Call to Return';
+          body = isAR
+            ? `القراءة ليست مجرد عادة — إنها صلاة العقل. عقلك يحتاج غذاءه اليومي. عُد إلى محرابك الفكري ولو لدقائق معدودة.`
+            : `Reading is not just a habit — it is the prayer of the mind. Your intellect needs its daily nourishment. Return to your sanctuary, even for just a few minutes.`;
+          break;
+        }
+        case 'summary': {
+          const totalH = (stats.totalMins / 60).toFixed(1);
+          title = isAR ? '📊 رصيدك المعرفي ينتظرك' : '📊 Your Knowledge Awaits';
+          body = isAR
+            ? `رصيدك التراكمي: ${totalH} ساعة | ${stats.totalStars} نجمة | ${stats.totalBooks} كتاب. لا تدع هذا الإرث يتوقف عند هذا الحد.`
+            : `Cumulative capital: ${totalH}h | ${stats.totalStars} stars | ${stats.totalBooks} books. Don't let this legacy stall here.`;
+          break;
+        }
+        case 'urgency': {
+          title = isAR ? '⚡ لحظة الحقيقة' : '⚡ Moment of Truth';
+          body = isAR
+            ? `كل ساعة بدون قراءة تُضعف الوصلات العصبية التي بنيتها. الدماغ لا ينتظر — عُد الآن وأعد تنشيط مسارات التعلم.`
+            : `Every hour without reading weakens the neural pathways you built. The brain doesn't wait — return now and reactivate your learning circuits.`;
+          break;
+        }
+      }
+
+      notifications.push({
+        id: ++notifId,
+        title,
+        body,
+        smallIcon: 'ic_stat_icon',
+        largeIcon: 'ic_launcher',
+        iconColor: '#ff0000',
+        schedule: { at: new Date(now + delay), allowWhileIdle: true }
+      });
+    }
+
+    await LocalNotifications.schedule({ notifications });
+  } catch (e) {
+    console.error("Re-engagement notifications scheduling failed:", e);
+  }
+};
+
 export const schedulePeriodicSummary = async (lang: 'ar' | 'en', stats: NotificationStats) => {
   try {
     const hasPermission = await LocalNotifications.checkPermissions();
