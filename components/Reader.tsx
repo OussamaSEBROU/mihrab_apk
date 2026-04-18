@@ -4,6 +4,7 @@ import type { Language, Book, ChatMessage, Annotation } from '../types';
 import { translations } from '../i18n/translations';
 import { storageService } from '../services/storageService';
 import { pdfStorage } from '../services/pdfStorage';
+import { syncBridge } from '../services/syncBridge';
 import { 
   ChevronLeft, ChevronRight, Maximize2, Highlighter, 
   PenTool, MessageSquare, Trash2, X, MousePointer2, 
@@ -185,7 +186,10 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
             const next = prev + 1;
             sessionSecondsRef.current = next;
             // Sync to storage every 30 seconds
-            if (next % 30 === 0) syncDelta();
+            if (next % 30 === 0) {
+              syncDelta();
+              syncBridge.recordActivity(); // Track activity for re-engagement system
+            }
             return next;
           });
         }
