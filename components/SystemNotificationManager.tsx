@@ -1,9 +1,10 @@
 
 import React, { useEffect } from 'react';
 import { App } from '@capacitor/app';
-import { scheduleMotivationalNotifications, schedulePeriodicSummary, getGMTDateString } from '../services/notificationService';
+import { scheduleMotivationalNotifications, schedulePeriodicSummary, scheduleReengagementNotifications, getGMTDateString } from '../services/notificationService';
 import { Book, Language } from '../types';
 import { storageService } from '../services/storageService';
+import { syncBridge } from '../services/syncBridge';
 
 interface Props {
   lang: Language;
@@ -67,11 +68,59 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
         storageService.generateAnalyticsSummary('weekly');
       }
       await schedulePeriodicSummary(notifLang, stats);
+
+      // ===== SMART RE-ENGAGEMENT: Schedule intensified notifications on exit =====
+      // The re-engagement system will activate when the user has been away 8+ hours
+      // We schedule these proactively so they fire even if the app isn't opened
+      const inactiveHours = syncBridge.getInactiveHours();
+      await scheduleReengagementNotifications(notifLang, stats, inactiveHours);
+
+      // Record activity on exit (so re-engagement timer starts fresh)
+      syncBridge.recordActivity();
+    };
+
+    // ===== APP RESUME HANDLER: Silent sync + re-engagement detection =====
+    const handleResume = async () => {
+      // 1. Silent background sync flush (queued data from offline periods)
+      syncBridge.flushPendingSync();
+
+      // 2. Record activity (user is back)
+      syncBridge.recordActivity();
+
+      // 3. Check inactivity and schedule re-engagement if needed
+      const inactiveHours = syncBridge.getInactiveHours();
+      if (inactiveHours >= 8) {
+        const latestBooks = storageService.getBooks();
+        const habitData = storageService.getHabitData();
+        const today = getGMTDateString();
+        
+        const todayReadingSeconds = latestBooks.reduce((acc: number, b: Book) => {
+          if (b.lastReadDate === today) return acc + (b.dailyTimeSeconds || 0);
+          return acc;
+        }, 0);
+
+        const stats = {
+          lastSessionMins: 0,
+          todayMins: Math.floor(todayReadingSeconds / 60),
+          totalMins: Math.floor(latestBooks.reduce((acc: number, b: Book) => acc + (b.timeSpentSeconds || 0), 0) / 60),
+          totalStars: latestBooks.reduce((acc: number, b: Book) => acc + (b.stars || 0), 0),
+          totalBooks: latestBooks.length,
+          bookBreakdown: latestBooks
+            .filter((b: Book) => b.lastReadDate === today && (b.dailyTimeSeconds || 0) > 0)
+            .map((b: Book) => ({ title: b.title, mins: Math.floor((b.dailyTimeSeconds || 0) / 60), stars: b.stars || 0 }))
+            .sort((a, b) => (b.mins || 0) - (a.mins || 0)),
+          streak: habitData.streak
+        };
+
+        await scheduleReengagementNotifications(notifLang, stats, inactiveHours);
+      }
     };
 
     const listener = App.addListener('appStateChange', ({ isActive }) => {
       if (!isActive) {
         handleExit();
+      } else {
+        handleResume();
       }
     });
 
@@ -82,6 +131,12 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
 
   // ── AUTO-GENERATE ANALYTICS ON MOUNT ──
   useEffect(() => {
+    // Record initial activity on mount
+    syncBridge.recordActivity();
+
+    // Flush any pending sync from offline periods
+    syncBridge.flushPendingSync();
+
     // Generate initial analytics if none exist
     if (storageService.shouldRegenerateSummary('48h')) {
       storageService.generateAnalyticsSummary('48h');
@@ -105,3 +160,4 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
 
   return null;
 };
+
