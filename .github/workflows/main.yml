@@ -103,9 +103,7 @@ jobs:
           content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
           content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
           
-          # إضافة إزاحة (2000) لضمان أن رقم الإصدار دائماً أعلى من النسخ السابقة
-          version_code = str(2000 + int(os.environ['RUN_NUMBER']))
-          content = re.sub(r'versionCode\s+\d+', "versionCode " + version_code, content)
+          content = re.sub(r'versionCode\s+\d+', "versionCode " + os.environ['RUN_NUMBER'], content)
           
           with open(gradle_path, 'w') as f:
               f.write(content)
