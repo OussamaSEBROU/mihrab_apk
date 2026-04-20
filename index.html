@@ -8,14 +8,21 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#000a00">
 
-    <!-- SECURITY: Content Security Policy (Updated to allow Tailwind and Fonts) -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com; connect-src 'self' ws: wss: https:;">
+    <!-- SECURITY: Content Security Policy (Offline-First — all assets served locally) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: https:;">
 
     <title>Sanctuary - المحراب</title>
     <link rel="icon" type="image/png" href="/icon.png">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700;900&family=Alexandria:wght@300;400;700;900&family=Tajawal:wght@300;400;700;900&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+    <!-- OFFLINE-FIRST: Local font files (Alexandria, Montserrat, Tajawal) -->
+    <link rel="stylesheet" href="/fonts/google-fonts.css">
+
+    <!-- OFFLINE-FIRST: Local PDF.js engine -->
+    <script src="/lib/pdf.min.js"></script>
+
+    <!-- OFFLINE-FIRST: Local JSZip engine (pre-loaded for instant import/export) -->
+    <script src="/lib/jszip.min.js"></script>
+
     <style>
         :root {
             --accent-red: #ff0000;
