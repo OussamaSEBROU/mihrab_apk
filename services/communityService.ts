@@ -42,17 +42,27 @@ export const FILE_EXTENSIONS = {
   SINGLE_BOOK: '.zip', // Unification: Books are now also zipped archives
 } as const;
 // ─────────────────────────────────────────────────────────
-//  JSZIP LAZY LOADER
+//  JSZIP LAZY LOADER — OFFLINE-FIRST (Local bundle primary)
 // ─────────────────────────────────────────────────────────
 let _jszip: any = null;
 const _loadJSZip = async (): Promise<any> => {
   if (_jszip) return _jszip;
+  // Check if already loaded globally
+  if ((window as any).JSZip) { _jszip = (window as any).JSZip; return _jszip; }
   return new Promise((resolve, reject) => {
-    if ((window as any).JSZip) { _jszip = (window as any).JSZip; resolve(_jszip); return; }
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    // PRIMARY: Load from local vendor (offline-safe)
+    s.src = '/vendor/jszip.min.js';
     s.onload = () => { _jszip = (window as any).JSZip; resolve(_jszip); };
-    s.onerror = reject;
+    s.onerror = () => {
+      // FALLBACK: Try CDN only if local fails (online-only scenario)
+      console.warn('⚠️ Local JSZip failed, attempting CDN fallback...');
+      const fallback = document.createElement('script');
+      fallback.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      fallback.onload = () => { _jszip = (window as any).JSZip; resolve(_jszip); };
+      fallback.onerror = reject;
+      document.head.appendChild(fallback);
+    };
     document.head.appendChild(s);
   });
 };
