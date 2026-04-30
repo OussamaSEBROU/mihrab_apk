@@ -121,6 +121,11 @@ const EASTERN_QUOTES: { ar: string; en: string }[] = [
   { ar: "الحكمة هي خلاصة التجارب الإنسانية المقطرة. — نبيل أحمد", en: "\"Wisdom is the distilled essence of human experience.\" — Nabil Ahmad" },
 ];
 
+// ─── توسعة المقولات الشرقية: 100 مقولة إضافية من quotesExpansion ─────────
+import { NEW_EASTERN_QUOTES, NEW_WESTERN_QUOTES } from './quotesExpansion';
+const EASTERN_EXPANSION: { ar: string; en: string }[] = NEW_EASTERN_QUOTES.map(q => ({ ar: q, en: q }));
+EASTERN_QUOTES.push(...EASTERN_EXPANSION);
+
 // صنف مقولات الغرب (100 مقولة) — للمستخدم الإنجليزي
 const WESTERN_QUOTES: { ar: string; en: string }[] = [
   { ar: "الصدق هو الفصل الأول من كتاب الحكمة. — توماس جيفرسون", en: "\"Honesty is the first chapter of the book of wisdom.\" — Thomas Jefferson" },
@@ -224,6 +229,10 @@ const WESTERN_QUOTES: { ar: string; en: string }[] = [
   { ar: "التعلم هو اكتشاف أن كل شيء ممكن. — والت ويتمان", en: "\"Learning is discovering that everything is possible.\" — Walt Whitman" },
   { ar: "الوقت الكافي للقراءة هو وقت مستثمر في المستقبل. — جون كنيدي", en: "\"Time spent reading is time invested in the future.\" — John F. Kennedy" },
 ];
+
+// ─── توسعة المقولات الغربية: 100 مقولة إضافية من quotesExpansion ─────────
+const WESTERN_EXPANSION: { ar: string; en: string }[] = NEW_WESTERN_QUOTES.map(q => ({ ar: q, en: q }));
+WESTERN_QUOTES.push(...WESTERN_EXPANSION);
 
 // Original quotes from the app (preserved)
 const ORIGINAL_QUOTES: { ar: string; en: string }[] = [
