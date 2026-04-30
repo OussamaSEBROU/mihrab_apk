@@ -1,139 +1,345 @@
-// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║          مُحرِّك الاقتباسات الذكي — Intelligent Quotes Engine            ║
-// ║  المصدر: رياض الحكمة | Source: Wisdom Gardens (Bilingual Edition)       ║
-// ║  منطق اللغة: عربي → علماء عرب/مسلمون + مختارات غربية                   ║
-// ║              إنجليزي → مفكرون غربيون فقط                                 ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
+import { Book, ShelfData } from '../types';
+import { pdfStorage } from './pdfStorage';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
-import type { Language } from '../types';
-import { NEW_EASTERN_QUOTES, NEW_WESTERN_QUOTES } from './quotesExpansion';
+// ─── Capacitor-native file share helper ──────────────────────────────────────
+// navigator.share({ files }) does NOT open the native share sheet reliably
+// inside a Capacitor WebView on Android. The correct path is:
+//   1. Write the blob to Cache directory via @capacitor/filesystem
+//   2. Call @capacitor/share with the resulting file URI
+//   3. Delete the temp file after a short delay
+const _capacitorShareBlob = async (
+  blob: Blob,
+  filename: string,
+  // title: string,
+  text: string,
+): Promise<void> => {
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 
-// ─── مكتبة الاقتباسات العربية: علماء مسلمون وعرب ───────────────────────────
-// Arabic Library: Islamic & Arab scholars (primary) + selected Western translations
-const _BASE_ARABIC_SCHOLARS: string[] = [
-  // الحديث النبوي الشريف
-  '«طَلَبُ العِلمِ فَريضَةٌ على كُلِّ مُسلِم» — النبي محمد ﷺ',
-  '«مَن سَلَكَ طَريقاً يَلتَمِسُ فيه عِلمًا سَهَّلَ اللهُ لَهُ طَريقاً إلى الجَنَّة» — النبي محمد ﷺ',
-  '«فَضلُ العِلمِ خَيرٌ مِن فَضلِ العِبادَة» — النبي محمد ﷺ',
+  const written = await Filesystem.writeFile({
+    path: filename,
+    data: base64,
+    directory: Directory.Cache,
+    recursive: true,
+  });
 
-  // الإمام علي بن أبي طالب رضي الله عنه
-  '«الجَهلُ يَهدِمُ بُيوتَ العِزِّ والكَرَم، والعِلمُ يَرفَعُ بَيتًا لا عِمادَ له» — الإمام علي بن أبي طالب',
-  '«قيمَةُ كُلِّ امرِئٍ ما يُحسِنُه» — الإمام علي بن أبي طالب',
-  '«ازدَد عِلمًا تَزدَد شَرَفًا، فالعُلَماءُ نُجومُ الأَرض» — الإمام علي بن أبي طالب',
+  await Share.share({
+    title,
+    text,
+    url: written.uri,
+    dialogTitle: title,
+  });
 
-  // الإمام الشافعي رحمه الله
-  '«مَن لَم يَتَعَلَّم في صِغَرِه، لَم يَتَقَدَّم في كِبَرِه» — الإمام الشافعي',
-  '«العِلمُ ما نَفَع، لَيسَ العِلمُ ما حُفِظ» — الإمام الشافعي',
-  '«تَعَلَّمِ العِلمَ وعَلِّمهُ الناسَ، فإنَّ فيه عِمارَةَ الدُّنيا والآخِرَة» — الإمام الشافعي',
-
-  // الإمام الغزالي رحمه الله
-  '«قَدرُ العَقلِ على قَدرِ مَعرِفَةِ الحَق» — الإمام الغزالي',
-  '«أَيُّها العاقِل! اِعمَل ولا تُماطِل، واِسمَع ولا تَجهَل، وتَعَلَّم ولا تَكسَل» — الإمام الغزالي',
-
-  // ابن خلدون
-  '«الكِتابُ مُعَلِّمٌ بلا عَصا ولا سَوط، ولا كَلِمَةِ غَضَب» — ابن خلدون',
-  '«المَعرِفَةُ إنَّما تَنشَأُ مِنَ الفِكرِ الثَّاقِب، لا مِنَ الحِفظِ وحدَه» — ابن خلدون',
-
-  // ابن القيم الجوزية
-  '«القِراءَةُ تَمُدُّ الرُّوحَ بالحَياة، وتُنيرُ العَقلَ بالحَكمَة» — ابن القيم الجوزية',
-  '«لا شَيءَ أَنفَعُ للقَلبِ مِن قِراءَةٍ مَع تَدَبُّر وتَفكُّر» — ابن القيم الجوزية',
-
-  // المتنبي
-  '«خَيرُ جَليسٍ في الأَنامِ كِتاب» — المتنبي',
-
-  // عباس محمود العقاد
-  '«الكُتُبُ لَيسَت أَكوامَ وَرَقٍ مَيِّتَة، إنَّها عُقولٌ تَعيشُ على الأَرفُف وتَنتَظِرُ مَن يُحاوِرُها» — عباس محمود العقاد',
-  '«اِقرَأ كِتابًا جَيِّدًا ثَلاثَ مَرَّات، فهو أَنفَعُ مِن أَن تَقرَأَ ثَلاثَةَ كُتُب» — عباس محمود العقاد',
-
-  // طه حسين
-  '«القِراءَةُ للعَقلِ كالغِذاءِ للجَسَد، لا حَياةَ بِغَيرِها» — طه حسين',
-
-  // ابن رشد
-  '«العَقلُ الَّذي لا يُغذَّى بِالمَعرِفَةِ يَضمُر كالجِسمِ الَّذي يُحرَمُ مِنَ الطَّعام» — ابن رشد',
-
-  // مختارات غربية مترجمة (تُقدَّم في السياق العربي)
-  '«القِراءَةُ تُزَوِّدُ العَقلَ بِمَوادِّ المَعرِفَة، والتَّفكيرُ هو ما يَجعَلُ ما نَقرَأُه مِلكًا لَنا» — جون لوك',
-  '«المَرءُ الَّذي لا يَقرَأُ لَيسَ أَفضَلَ حالًا مِنَ الَّذي لا يَستَطيعُ القِراءَة» — مارك توين',
-  '«لَيسَ ثَمَّةَ سَفينَةٌ كالكِتابِ تَأخُذُنا إلى أَبعَدِ الأَماكِن» — إيميلي ديكنسون',
-  '«التَّعَلُّمُ هو الشَّيءُ الوَحيدُ الَّذي لا يَستَطيعُ العَقلُ أَن يَتعَبَ مِنهُ أَبَدًا» — ليوناردو دا فينشي',
-];
-
-// ─── مكتبة الاقتباسات الإنجليزية: مفكرون غربيون فقط ────────────────────────
-// English Library: Western thinkers exclusively
-const _BASE_ENGLISH_THINKERS: string[] = [
-  // Philosophy & Literature
-  '"Reading furnishes the mind only with materials of knowledge; it is thinking that makes what we read ours." — John Locke',
-  '"The man who does not read has no advantage over the man who cannot read." — Mark Twain',
-  '"There is no frigate like a book to take us leagues away." — Emily Dickinson',
-  '"Learning never exhausts the mind." — Leonardo da Vinci',
-  '"A reader lives a thousand lives before he dies. The man who never reads lives only one." — George R.R. Martin',
-  '"Not all readers are leaders, but all leaders are readers." — Harry S. Truman',
-  '"The reading of all good books is like a conversation with the finest minds of past centuries." — René Descartes',
-  '"To read without reflecting is like eating without digesting." — Edmund Burke',
-  '"Books are mirrors: we only see in them what we already have inside us." — Carlos Ruiz Zafón',
-  '"A book is a dream that you hold in your hand." — Neil Gaiman',
-  '"I cannot live without books." — Thomas Jefferson',
-  '"Books are the quietest and most constant of friends; they are the most accessible and wisest of counselors." — Charles W. Eliot',
-
-  // Science & Reason
-  '"An investment in knowledge pays the best interest." — Benjamin Franklin',
-  '"The more that you read, the more things you will know. The more that you learn, the more places you\'ll go." — Dr. Seuss',
-  '"Education is not the filling of a pail, but the lighting of a fire." — W.B. Yeats',
-  '"The only true wisdom is in knowing you know nothing." — Socrates',
-  '"Wonder is the beginning of wisdom." — Aristotle',
-  '"Employ your time in improving yourself by other men\'s writings, so that you shall gain easily what others have labored hard for." — Socrates',
-
-  // Modern Thinkers
-  '"Until I feared I would lose it, I never loved to read. One does not love breathing." — Harper Lee',
-  '"Think before you speak. Read before you think." — Fran Lebowitz',
-  '"The wisest mind has something yet to learn." — George Santayana',
-  '"We read to know we are not alone." — C.S. Lewis',
-  '"A capacity for wonder is essential to wisdom." — Alfred North Whitehead',
-  '"Knowledge is power. Information is liberating. Education is the premise of progress." — Kofi Annan',
-];
-
-// ─── المصفوفات المدمجة: الأصلية + التوسعة (200 مقولة إضافية) ──────────────
-// Combined Arrays: Original + Expansion (200 additional quotes)
-const ARABIC_SCHOLARS: string[] = [..._BASE_ARABIC_SCHOLARS, ...NEW_EASTERN_QUOTES];
-const ENGLISH_THINKERS: string[] = [..._BASE_ENGLISH_THINKERS, ...NEW_WESTERN_QUOTES];
-
-// ─── حالة الاقتباسات المستخدمة (لتجنب التكرار) ──────────────────────────────
-let _usedArabicIndices: number[] = [];
-let _usedEnglishIndices: number[] = [];
-
-// ─── الدالة الرئيسية: جلب اقتباس فريد حسب اللغة ──────────────────────────
-/**
- * يعيد اقتباسًا فريدًا مناسبًا للغة المختارة.
- * وضع العربية  → علماء عرب/مسلمون + مختارات غربية مترجمة.
- * وضع الإنجليزية → مفكرون غربيون فقط.
- */
-export const getContextualQuote = (lang: Language): string => {
-  if (lang === 'ar') {
-    if (_usedArabicIndices.length >= ARABIC_SCHOLARS.length) _usedArabicIndices = [];
-    let idx: number;
-    do { idx = Math.floor(Math.random() * ARABIC_SCHOLARS.length); }
-    while (_usedArabicIndices.includes(idx));
-    _usedArabicIndices.push(idx);
-    return ARABIC_SCHOLARS[idx];
-  } else {
-    if (_usedEnglishIndices.length >= ENGLISH_THINKERS.length) _usedEnglishIndices = [];
-    let idx: number;
-    do { idx = Math.floor(Math.random() * ENGLISH_THINKERS.length); }
-    while (_usedEnglishIndices.includes(idx));
-    _usedEnglishIndices.push(idx);
-    return ENGLISH_THINKERS[idx];
-  }
+  setTimeout(async () => {
+    try { await Filesystem.deleteFile({ path: filename, directory: Directory.Cache }); }
+    catch { /* ignore */ }
+  }, 30_000);
 };
 
-// ─── جلب عدة اقتباسات دفعة واحدة (للإشعارات المتعددة) ────────────────────
-export const getBatchQuotes = (lang: Language, count: number): string[] => {
-  const quotes: string[] = [];
-  for (let i = 0; i < count; i++) quotes.push(getContextualQuote(lang));
-  return quotes;
+// ─── JSZip Loader: Guaranteed single-load with full error recovery ───────────
+let _jsZipPromise: Promise<any> | null = null;
+
+const _loadJSZip = (): Promise<any> => {
+  if ((window as any).JSZip) return Promise.resolve((window as any).JSZip);
+  if (_jsZipPromise) return _jsZipPromise;
+
+  _jsZipPromise = new Promise<any>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    script.async = true;
+    script.onload = () => {
+      if ((window as any).JSZip) {
+        resolve((window as any).JSZip);
+      } else {
+        _jsZipPromise = null;
+        reject(new Error('[Mihrab] JSZip loaded but not found on window'));
+      }
+    };
+    script.onerror = () => {
+      _jsZipPromise = null;
+      reject(new Error('[Mihrab] Failed to load JSZip engine'));
+    };
+    document.head.appendChild(script);
+  });
+
+  return _jsZipPromise;
 };
 
-// ─── إعادة تعيين مؤشرات الاستخدام (عند بدء جلسة جديدة) ──────────────────
-export const resetQuoteIndices = (): void => {
-  _usedArabicIndices = [];
-  _usedEnglishIndices = [];
+// ─── Pure Import sanitiser: strips personal stats, preserves knowledge ───────
+const _sanitiseBookForExport = (book: Book): Book => ({
+  ...book,
+  stars: 0,
+  timeSpentSeconds: 0,
+  dailyTimeSeconds: 0,
+  sessionTimeSeconds: 0,
+  lastReadAt: undefined,
+  lastReadDate: '',
+  annotations: book.annotations ?? [],
+});
+
+// ─── Community Service ────────────────────────────────────────────────────────
+export const communityService = {
+
+  exportShelf: async (
+    shelf: ShelfData,
+    books: Book[],
+    userName: string
+  ): Promise<{ uri: string; filename: string }> => {
+    const JSZip = await _loadJSZip();
+    const zip = new JSZip();
+
+    zip.file('meta.json', JSON.stringify({
+      version: '2.1.0',
+      exportedBy: userName,
+      exportedAt: new Date().toISOString(),
+      type: 'SHELF_ARCHIVE',
+      bookCount: books.length,
+    }));
+
+    zip.file('shelf.json', JSON.stringify(shelf));
+
+    const booksFolder = zip.folder('books')!;
+    let exportedCount = 0;
+
+    for (const book of books) {
+      const pdfData = await pdfStorage.getFile(book.id);
+
+      if (!pdfData || pdfData.byteLength < 512) {
+        console.warn(`[Mihrab/Export] Skipping "${book.title}" — binary missing or corrupt`);
+        continue;
+      }
+
+      const cleanBook = _sanitiseBookForExport(book);
+      booksFolder.file(`${book.id}.json`, JSON.stringify(cleanBook));
+      booksFolder.file(`${book.id}.pdf`, pdfData);
+      exportedCount++;
+    }
+
+    if (exportedCount === 0) {
+      throw new Error('NO_EXPORTABLE_BOOKS');
+    }
+
+    const content = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const safeShelfName = shelf.name.replace(/[^\w\u0600-\u06FF]/g, '_');
+    const filename = `Mihrab_${safeShelfName}_${Date.now()}.zip`;
+    const uri = URL.createObjectURL(content);
+
+    return { uri, filename };
+  },
+
+  shareBook: async (book: Book, lang: string): Promise<void> => {
+    const JSZip = await _loadJSZip();
+    const zip = new JSZip();
+
+    const pdfData = await pdfStorage.getFile(book.id);
+    if (!pdfData || pdfData.byteLength < 512) {
+      throw new Error(
+        lang === 'ar'
+          ? 'ملف الكتاب غير موجود محلياً أو تالف'
+          : 'Book binary not found locally or is corrupt'
+      );
+    }
+
+    const cleanBook = _sanitiseBookForExport(book);
+
+    zip.file('meta.json', JSON.stringify({
+      version: '2.1.0',
+      type: 'SINGLE_BOOK',
+      exportedAt: new Date().toISOString(),
+    }));
+    zip.file('book.json', JSON.stringify(cleanBook));
+    zip.file('book.pdf', pdfData);
+
+    const content = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 5 },
+    });
+
+    const safeTitle = book.title.replace(/[^\w\u0600-\u06FF]/g, '_');
+    const filename = `${safeTitle}.mbook`;
+    const shareText = lang === 'ar'
+      ? `شارك معي هذا الكتاب من المحراب: ${book.title}`
+      : `Check out this book from Mihrab: ${book.title}`;
+
+    await _capacitorShareBlob(content, filename, book.title, shareText);
+  },
+
+  importFile: async (file: File): Promise<{ shelf: ShelfData; books: Book[] }> => {
+    const JSZip = await _loadJSZip();
+    const zip = await JSZip.loadAsync(file);
+
+    const metaJson = await zip.file('meta.json')?.async('string');
+    const meta = metaJson ? JSON.parse(metaJson) : {};
+
+    if (meta.type === 'SINGLE_BOOK') {
+      throw new Error('BOOK_AS_SHELF');
+    }
+
+    const shelfJson = await zip.file('shelf.json')?.async('string');
+    if (!shelfJson) throw new Error('INVALID_FORMAT');
+
+    const shelf: ShelfData = JSON.parse(shelfJson);
+    const books: Book[] = [];
+
+    const booksFolder = zip.folder('books');
+    if (!booksFolder) throw new Error('INVALID_FORMAT');
+
+    const jsonFiles: { relativePath: string; file: any }[] = [];
+    booksFolder.forEach((relativePath: string, file: any) => {
+      if (relativePath.endsWith('.json')) jsonFiles.push({ relativePath, file });
+    });
+
+    for (const { relativePath, file: jsonFile } of jsonFiles) {
+      try {
+        const bookId = relativePath.replace('.json', '');
+        const bookData: Book = JSON.parse(await jsonFile.async('string'));
+        const pdfData: ArrayBuffer | undefined = await zip
+          .file(`books/${bookId}.pdf`)
+          ?.async('arraybuffer');
+
+        if (!pdfData || pdfData.byteLength < 512) {
+          console.warn(`[Mihrab/Import] Skipping "${bookData.title}" — PDF missing in archive`);
+          continue;
+        }
+
+        await pdfStorage.saveFile(bookId, pdfData);
+
+        const cleanBook: Book = {
+          ...bookData,
+          stars: 0,
+          timeSpentSeconds: 0,
+          dailyTimeSeconds: 0,
+          sessionTimeSeconds: 0,
+          lastReadAt: undefined,
+          lastReadDate: '',
+          annotations: bookData.annotations ?? [],
+        };
+
+        books.push(cleanBook);
+      } catch (err) {
+        console.error('[Mihrab/Import] Failed to process book entry:', relativePath, err);
+      }
+    }
+
+    return { shelf, books };
+  },
+
+  importBook: async (file: File, targetShelfId: string): Promise<Book> => {
+    const JSZip = await _loadJSZip();
+    const zip = await JSZip.loadAsync(file);
+
+    const metaJson = await zip.file('meta.json')?.async('string');
+    const meta = metaJson ? JSON.parse(metaJson) : {};
+
+    if (meta.type === 'SHELF_ARCHIVE') {
+      throw new Error('SHELF_AS_BOOK');
+    }
+
+    const bookJson = await zip.file('book.json')?.async('string');
+    const pdfData = await zip.file('book.pdf')?.async('arraybuffer');
+
+    if (!bookJson || !pdfData || pdfData.byteLength < 512) {
+      throw new Error('INVALID_FORMAT');
+    }
+
+    const bookData: Book = JSON.parse(bookJson);
+    const newId = `imp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+    await pdfStorage.saveFile(newId, pdfData);
+
+    const importedBook: Book = {
+      ...bookData,
+      id: newId,
+      shelfId: targetShelfId,
+      stars: 0,
+      timeSpentSeconds: 0,
+      dailyTimeSeconds: 0,
+      sessionTimeSeconds: 0,
+      lastReadAt: undefined,
+      lastReadDate: '',
+      annotations: bookData.annotations ?? [],
+    };
+
+    return importedBook;
+  },
+
+  shareShelf: async (
+    shelf: ShelfData,
+    books: Book[],
+    userName: string,
+    lang: string
+  ): Promise<{ success: boolean; method: 'native' | 'download' | 'clipboard' }> => {
+    const JSZip = await _loadJSZip();
+    const zip = new JSZip();
+
+    const shelfBooks = books.filter(b => b.shelfId === shelf.id);
+
+    zip.file('meta.json', JSON.stringify({
+      version: '2.1.0',
+      exportedBy: userName,
+      exportedAt: new Date().toISOString(),
+      type: 'SHELF_ARCHIVE',
+      bookCount: shelfBooks.length,
+    }));
+
+    zip.file('shelf.json', JSON.stringify(shelf));
+
+    const booksFolder = zip.folder('books')!;
+    let exportedCount = 0;
+
+    for (const book of shelfBooks) {
+      const pdfData = await pdfStorage.getFile(book.id);
+
+      if (!pdfData || pdfData.byteLength < 512) {
+        console.warn(`[Mihrab/ShareShelf] Skipping "${book.title}" — binary missing or corrupt`);
+        continue;
+      }
+
+      const cleanBook = _sanitiseBookForExport(book);
+      booksFolder.file(`${book.id}.json`, JSON.stringify(cleanBook));
+      booksFolder.file(`${book.id}.pdf`, pdfData);
+      exportedCount++;
+    }
+
+    if (exportedCount === 0) {
+      throw new Error('NO_EXPORTABLE_BOOKS');
+    }
+
+    const content = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const safeShelfName = shelf.name.replace(/[^\w\u0600-\u06FF]/g, '_');
+    const filename = `Mihrab_${safeShelfName}_${Date.now()}.zip`;
+    const shareText = lang === 'ar'
+      ? `شارك معي هذا الرف من المحراب: ${shelf.name}`
+      : `Check out this shelf from Mihrab: ${shelf.name}`;
+
+    await _capacitorShareBlob(content, filename, shelf.name, shareText);
+    return { success: true, method: 'native' };
+  },
+
+  downloadFile: async (uri: string, filename: string, _lang: string): Promise<void> => {
+    const link = document.createElement('a');
+    link.href = uri;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(uri), 10_000);
+  },
 };
