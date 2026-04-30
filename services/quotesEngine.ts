@@ -6,10 +6,11 @@
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 import type { Language } from '../types';
+import { NEW_EASTERN_QUOTES, NEW_WESTERN_QUOTES } from './quotesExpansion';
 
 // ─── مكتبة الاقتباسات العربية: علماء مسلمون وعرب ───────────────────────────
 // Arabic Library: Islamic & Arab scholars (primary) + selected Western translations
-const ARABIC_SCHOLARS: string[] = [
+const _BASE_ARABIC_SCHOLARS: string[] = [
   // الحديث النبوي الشريف
   '«طَلَبُ العِلمِ فَريضَةٌ على كُلِّ مُسلِم» — النبي محمد ﷺ',
   '«مَن سَلَكَ طَريقاً يَلتَمِسُ فيه عِلمًا سَهَّلَ اللهُ لَهُ طَريقاً إلى الجَنَّة» — النبي محمد ﷺ',
@@ -59,7 +60,7 @@ const ARABIC_SCHOLARS: string[] = [
 
 // ─── مكتبة الاقتباسات الإنجليزية: مفكرون غربيون فقط ────────────────────────
 // English Library: Western thinkers exclusively
-const ENGLISH_THINKERS: string[] = [
+const _BASE_ENGLISH_THINKERS: string[] = [
   // Philosophy & Literature
   '"Reading furnishes the mind only with materials of knowledge; it is thinking that makes what we read ours." — John Locke',
   '"The man who does not read has no advantage over the man who cannot read." — Mark Twain',
@@ -90,6 +91,11 @@ const ENGLISH_THINKERS: string[] = [
   '"A capacity for wonder is essential to wisdom." — Alfred North Whitehead',
   '"Knowledge is power. Information is liberating. Education is the premise of progress." — Kofi Annan',
 ];
+
+// ─── المصفوفات المدمجة: الأصلية + التوسعة (200 مقولة إضافية) ──────────────
+// Combined Arrays: Original + Expansion (200 additional quotes)
+const ARABIC_SCHOLARS: string[] = [..._BASE_ARABIC_SCHOLARS, ...NEW_EASTERN_QUOTES];
+const ENGLISH_THINKERS: string[] = [..._BASE_ENGLISH_THINKERS, ...NEW_WESTERN_QUOTES];
 
 // ─── حالة الاقتباسات المستخدمة (لتجنب التكرار) ──────────────────────────────
 let _usedArabicIndices: number[] = [];
