@@ -50,7 +50,7 @@ const _loadJSZip = async (): Promise<any> => {
   return new Promise((resolve, reject) => {
     if ((window as any).JSZip) { _jszip = (window as any).JSZip; resolve(_jszip); return; }
     const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.src = '/vendor/jszip.min.js';
     s.onload = () => { _jszip = (window as any).JSZip; resolve(_jszip); };
     s.onerror = reject;
     document.head.appendChild(s);
@@ -683,4 +683,3 @@ export const communityService = {
     });
   },
 };
-
