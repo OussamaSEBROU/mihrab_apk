@@ -20,9 +20,9 @@ import {
   Check, Upload, Loader2, BookMarked, AlertTriangle,
   ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson
 } from 'lucide-react';
-// Global safety check for pdfjsLib to prevent initialization crashes if local bundle fails
+// Global safety check for pdfjsLib to prevent initialization crashes if CDN fails to load
 if (typeof pdfjsLib !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.js';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
 const MotionDiv = motion.div as any;
 const MotionAside = motion.aside as any;
