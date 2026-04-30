@@ -1,0 +1,111 @@
+/* ═══════════════════════════════════════════════════════════════════
+   LOCAL FONT DEFINITIONS — 100% Offline-First Architecture
+   Alexandria (Arabic) | Montserrat (English) | Tajawal | Amiri
+   All font files are bundled locally — zero CDN dependency
+   ═══════════════════════════════════════════════════════════════════ */
+
+@font-face {
+  font-family: 'Alexandria';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(/fonts/UMBCrPdDqW66y0Y2usFeQCH18mulUxBvI9qlTqbH.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Alexandria';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/fonts/UMBCrPdDqW66y0Y2usFeQCH18mulUxBvI9r7TqbH.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Alexandria';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(/fonts/UMBCrPdDqW66y0Y2usFeQCH18mulUxBvI9ocSabH.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Alexandria';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url(/fonts/UMBCrPdDqW66y0Y2usFeQCH18mulUxBvI9pSSabH.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Amiri';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/fonts/J7aRnpd8CGxBHqUp.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Amiri';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(/fonts/J7acnpd8CGxBHp2VkZY4.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(/fonts/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCs16Ew-.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/fonts/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Ew-.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(/fonts/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCu170w-.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(/fonts/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCuM70w-.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url(/fonts/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCvC70w-.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Tajawal';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url(/fonts/Iurf6YBj_oCad4k1l5qjLrY.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Tajawal';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/fonts/Iura6YBj_oCad4k1rzY.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Tajawal';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(/fonts/Iurf6YBj_oCad4k1l4qkLrY.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Tajawal';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url(/fonts/Iurf6YBj_oCad4k1l7KmLrY.ttf) format('truetype');
+}
