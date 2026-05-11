@@ -13,6 +13,104 @@ const STORAGE_KEYS = {
   ANALYTICS: 'sanctuary_analytics'
 };
 
+// ===================================================================
+// IRONCLAD PERSISTENT STORAGE ENGINE — IndexedDB Layer
+// localStorage is volatile (cleared by system/cache clearing).
+// IndexedDB provides persistent, reliable storage that survives
+// cache clears, network loss, and system memory pressure.
+// Architecture: Memory Cache → localStorage → IndexedDB → Filesystem
+// ===================================================================
+const META_DB_NAME = 'SanctuaryMetaDB';
+const META_DB_VERSION = 1;
+const META_STORE_NAME = 'AppData';
+
+let _metaDb: IDBDatabase | null = null;
+let _metaDbPromise: Promise<IDBDatabase> | null = null;
+
+const _getMetaDb = (): Promise<IDBDatabase> => {
+  if (_metaDb) return Promise.resolve(_metaDb);
+  if (_metaDbPromise) return _metaDbPromise;
+  _metaDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(META_DB_NAME, META_DB_VERSION);
+    req.onupgradeneeded = (e: any) => {
+      const db = e.target.result as IDBDatabase;
+      if (!db.objectStoreNames.contains(META_STORE_NAME)) {
+        db.createObjectStore(META_STORE_NAME);
+      }
+    };
+    req.onsuccess = () => {
+      _metaDb = req.result;
+      _metaDb!.onclose = () => { _metaDb = null; _metaDbPromise = null; };
+      _metaDb!.onversionchange = () => { _metaDb?.close(); _metaDb = null; _metaDbPromise = null; };
+      resolve(_metaDb!);
+    };
+    req.onerror = () => { _metaDbPromise = null; reject(req.error); };
+  });
+  return _metaDbPromise;
+};
+
+/** Write data to IndexedDB — fire-and-forget, non-blocking */
+const _persistToIDB = async (key: string, value: any): Promise<void> => {
+  try {
+    const db = await _getMetaDb();
+    return new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(META_STORE_NAME, 'readwrite');
+      tx.objectStore(META_STORE_NAME).put(JSON.stringify(value), key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.warn('⚠️ IDB write failed:', key, e);
+  }
+};
+
+/** Read data from IndexedDB */
+const _readFromIDB = async <T = any>(key: string): Promise<T | null> => {
+  try {
+    const db = await _getMetaDb();
+    return new Promise<T | null>((resolve, reject) => {
+      const tx = db.transaction(META_STORE_NAME, 'readonly');
+      const req = tx.objectStore(META_STORE_NAME).get(key);
+      req.onsuccess = () => {
+        if (req.result != null) {
+          try { resolve(JSON.parse(req.result)); } catch { resolve(null); }
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => { reject(req.error); };
+    });
+  } catch (e) {
+    console.warn('⚠️ IDB read failed:', key, e);
+    return null;
+  }
+};
+
+/** Write data to native filesystem backup */
+const _persistToFilesystem = (filename: string, data: any): void => {
+  if (Capacitor.isNativePlatform()) {
+    Filesystem.writeFile({
+      path: filename,
+      data: JSON.stringify(data),
+      directory: Directory.Data,
+      encoding: 'utf8' as any
+    }).catch(() => {});
+  }
+};
+
+/** Request persistent storage to prevent eviction by browser/OS */
+const _requestPersistentStorage = (): void => {
+  if (navigator?.storage?.persist) {
+    navigator.storage.persist().then(granted => {
+      if (granted) console.log('🔒 Persistent storage: GRANTED — data is immune to eviction');
+      else console.warn('⚠️ Persistent storage: denied — data may be evicted under pressure');
+    }).catch(() => {});
+  }
+};
+
+// Request persistence on module load
+_requestPersistentStorage();
+
 const DEFAULT_SHELF: ShelfData = {
   id: 'default',
   name: 'Main Sanctuary / المحراب الأساسي',
@@ -118,15 +216,11 @@ export const storageService = {
     _shelvesCache = shelves;
     localStorage.setItem(STORAGE_KEYS.SHELVES, JSON.stringify(shelves));
     
-    // Hard persistence for mobile (Backup)
-    if (Capacitor.isNativePlatform()) {
-      Filesystem.writeFile({
-        path: 'backup_shelves.json',
-        data: JSON.stringify(shelves),
-        directory: Directory.Data,
-        encoding: 'utf8' as any
-      }).catch(() => {});
-    }
+    // Layer 3: IndexedDB persistence (survives cache clears)
+    _persistToIDB(STORAGE_KEYS.SHELVES, shelves).catch(() => {});
+    
+    // Layer 4: Filesystem backup for native platforms
+    _persistToFilesystem('backup_shelves.json', shelves);
     
     syncBridge.syncFull(storageService.getBooks(), shelves, 'Shelf Update');
   },
@@ -149,15 +243,11 @@ export const storageService = {
     _booksCache = books;
     localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
     
-    // Hard persistence for mobile (Backup)
-    if (Capacitor.isNativePlatform()) {
-      Filesystem.writeFile({
-        path: 'backup_books.json',
-        data: JSON.stringify(books),
-        directory: Directory.Data,
-        encoding: 'utf8' as any
-      }).catch(() => {});
-    }
+    // Layer 3: IndexedDB persistence (survives cache clears)
+    _persistToIDB(STORAGE_KEYS.BOOKS, books).catch(() => {});
+    
+    // Layer 4: Filesystem backup for native platforms
+    _persistToFilesystem('backup_books.json', books);
   },
 
   deleteBook: (bookId: string) => {
@@ -258,6 +348,12 @@ export const storageService = {
 
   saveHabitData: (habit: HabitData) => {
     localStorage.setItem(STORAGE_KEYS.HABIT, JSON.stringify(habit));
+    
+    // Layer 3: IndexedDB persistence (survives cache clears)
+    _persistToIDB(STORAGE_KEYS.HABIT, habit).catch(() => {});
+    
+    // Layer 4: Filesystem backup for native platforms
+    _persistToFilesystem('backup_habit.json', habit);
   },
 
   recordReadingDay: () => {
@@ -379,9 +475,10 @@ export const storageService = {
       totalBooks: books.length
     };
 
-    // Save to localStorage
+    // Save to localStorage + IndexedDB
     const key = period === '48h' ? 'sanctuary_analytics_48h' : 'sanctuary_analytics_weekly';
     localStorage.setItem(key, JSON.stringify(summary));
+    _persistToIDB(key, summary).catch(() => {});
 
     return summary;
   },
@@ -415,19 +512,42 @@ export const storageService = {
     let booksRecovered = 0;
     let shelvesRecovered = 0;
 
+    // Initialize IndexedDB connection early
+    try { await _getMetaDb(); } catch (e) { console.warn('⚠️ MetaDB init failed:', e); }
+
     // ── فحص الكتب ──
     const currentBooks = localStorage.getItem(STORAGE_KEYS.BOOKS);
     const parsedBooks = currentBooks ? JSON.parse(currentBooks) : [];
     
     if (!Array.isArray(parsedBooks) || parsedBooks.length === 0) {
       console.log('🚨 لا توجد كتب في localStorage — بدء محاولة الاستعادة...');
-      const recovered = await attemptBookRecovery();
-      if (recovered.length > 0) {
+      
+      // Recovery Layer 1: IndexedDB (most reliable, survives cache clears)
+      const idbBooks = await _readFromIDB<Book[]>(STORAGE_KEYS.BOOKS);
+      if (Array.isArray(idbBooks) && idbBooks.length > 0) {
+        const recovered = idbBooks.map(b => ({
+          ...b,
+          shelfId: b.shelfId || 'default',
+          annotations: b.annotations || []
+        }));
+        localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(recovered));
         _booksCache = recovered;
         booksRecovered = recovered.length;
+        console.log(`✅ تم استعادة ${recovered.length} كتاب من IndexedDB!`);
+      } else {
+        // Recovery Layer 2: Filesystem backup (native only)
+        const recovered = await attemptBookRecovery();
+        if (recovered.length > 0) {
+          _booksCache = recovered;
+          booksRecovered = recovered.length;
+          // Backfill IndexedDB with recovered data
+          _persistToIDB(STORAGE_KEYS.BOOKS, recovered).catch(() => {});
+        }
       }
     } else {
       console.log(`📚 الكتب سليمة: ${parsedBooks.length} كتاب موجود`);
+      // Ensure IndexedDB is synced with current localStorage data
+      _persistToIDB(STORAGE_KEYS.BOOKS, parsedBooks).catch(() => {});
     }
 
     // ── فحص الرفوف ──
@@ -436,21 +556,67 @@ export const storageService = {
     
     if (!Array.isArray(parsedShelves) || parsedShelves.length === 0) {
       console.log('🚨 لا توجد رفوف في localStorage — بدء محاولة الاستعادة...');
-      const recovered = await attemptShelfRecovery();
-      if (recovered.length > 0) {
-        _shelvesCache = recovered;
-        shelvesRecovered = recovered.length;
+      
+      // Recovery Layer 1: IndexedDB
+      const idbShelves = await _readFromIDB<ShelfData[]>(STORAGE_KEYS.SHELVES);
+      if (Array.isArray(idbShelves) && idbShelves.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.SHELVES, JSON.stringify(idbShelves));
+        _shelvesCache = idbShelves;
+        shelvesRecovered = idbShelves.length;
+        console.log(`✅ تم استعادة ${idbShelves.length} رف من IndexedDB!`);
+      } else {
+        // Recovery Layer 2: Filesystem backup
+        const recovered = await attemptShelfRecovery();
+        if (recovered.length > 0) {
+          _shelvesCache = recovered;
+          shelvesRecovered = recovered.length;
+          _persistToIDB(STORAGE_KEYS.SHELVES, recovered).catch(() => {});
+        }
       }
+    } else {
+      // Ensure IndexedDB is synced
+      _persistToIDB(STORAGE_KEYS.SHELVES, parsedShelves).catch(() => {});
     }
 
     // ── فحص بيانات العادات ──
     const habitData = localStorage.getItem(STORAGE_KEYS.HABIT);
     if (!habitData) {
-      console.log('🚨 بيانات العادات مفقودة — إعادة التهيئة...');
-      storageService.saveHabitData({
-        history: [], missedDays: [], shields: 2, streak: 0,
-        lastUpdated: '', consecutiveFullDays: 0
-      });
+      console.log('🚨 بيانات العادات مفقودة — محاولة استعادة...');
+      
+      // Try IndexedDB first
+      const idbHabit = await _readFromIDB<HabitData>(STORAGE_KEYS.HABIT);
+      if (idbHabit && idbHabit.history) {
+        localStorage.setItem(STORAGE_KEYS.HABIT, JSON.stringify(idbHabit));
+        console.log('✅ تم استعادة بيانات العادات من IndexedDB!');
+      } else {
+        // Try filesystem
+        try {
+          if (Capacitor.isNativePlatform()) {
+            const result = await Filesystem.readFile({
+              path: 'backup_habit.json',
+              directory: Directory.Data,
+              encoding: 'utf8' as any
+            });
+            if (result.data && typeof result.data === 'string') {
+              const recovered = JSON.parse(result.data);
+              if (recovered && recovered.history) {
+                localStorage.setItem(STORAGE_KEYS.HABIT, JSON.stringify(recovered));
+                _persistToIDB(STORAGE_KEYS.HABIT, recovered).catch(() => {});
+                console.log('✅ تم استعادة بيانات العادات من النسخة الاحتياطية!');
+              }
+            }
+          }
+        } catch {
+          // Initialize fresh habit data as last resort
+          storageService.saveHabitData({
+            history: [], missedDays: [], shields: 2, streak: 0,
+            lastUpdated: '', consecutiveFullDays: 0
+          });
+        }
+      }
+    } else {
+      // Ensure IndexedDB is synced
+      try { _persistToIDB(STORAGE_KEYS.HABIT, JSON.parse(habitData)).catch(() => {}); } catch {}
     }
 
     if (booksRecovered > 0 || shelvesRecovered > 0) {
@@ -462,3 +628,36 @@ export const storageService = {
     return { booksRecovered, shelvesRecovered };
   }
 };
+
+// ===================================================================
+// PERIODIC INTEGRITY GUARDIAN — runs every 5 minutes
+// Ensures IndexedDB and Filesystem stay synced with localStorage
+// even if a write was missed due to transient errors
+// ===================================================================
+if (typeof window !== 'undefined') {
+  setInterval(() => {
+    try {
+      const books = localStorage.getItem(STORAGE_KEYS.BOOKS);
+      if (books) {
+        const parsed = JSON.parse(books);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          _persistToIDB(STORAGE_KEYS.BOOKS, parsed).catch(() => {});
+          _persistToFilesystem('backup_books.json', parsed);
+        }
+      }
+      const shelves = localStorage.getItem(STORAGE_KEYS.SHELVES);
+      if (shelves) {
+        const parsed = JSON.parse(shelves);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          _persistToIDB(STORAGE_KEYS.SHELVES, parsed).catch(() => {});
+          _persistToFilesystem('backup_shelves.json', parsed);
+        }
+      }
+      const habit = localStorage.getItem(STORAGE_KEYS.HABIT);
+      if (habit) {
+        _persistToIDB(STORAGE_KEYS.HABIT, JSON.parse(habit)).catch(() => {});
+        _persistToFilesystem('backup_habit.json', JSON.parse(habit));
+      }
+    } catch {}
+  }, 5 * 60 * 1000); // كل 5 دقائق
+}
