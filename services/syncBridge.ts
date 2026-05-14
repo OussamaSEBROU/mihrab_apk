@@ -2,7 +2,7 @@ import { Device } from '@capacitor/device';
 import { Capacitor } from '@capacitor/core';
 
 // رابط الـ Backend الصحيح كما في موقع Render
-const API_BASE_URL = 'https://mihrab-backend.onrender.com/api'; 
+const API_BASE_URL = 'https://mihrab-backend.onrender.com'; 
 
 // ===== OFFLINE-FIRST: SYNC QUEUE ENGINE =====
 const SYNC_QUEUE_KEY = 'sanctuary_sync_queue';
