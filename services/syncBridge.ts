@@ -17,7 +17,7 @@ interface QueuedSync {
 // Survives cache clears — ensures offline syncs are never lost
 const SYNC_IDB_NAME = 'SanctuarySyncDB';
 const SYNC_IDB_VERSION = 1;
-const SYNC_STORE = 'SyncQueue';
+// const SYNC_STORE = 'SyncQueue';
 
 let _syncDb: IDBDatabase | null = null;
 let _syncDbPromise: Promise<IDBDatabase> | null = null;
