@@ -1,8 +1,7 @@
 import { Device } from '@capacitor/device';
-import { Capacitor } from '@capacitor/core';
 
-// رابط الـ Backend الصحيح كما في موقع Render
-const API_BASE_URL = 'https://mihrab-backend.onrender.com/api'; 
+// رابط الـ Backend الخاص بك على Render (تأكد من أنه ينتهي بـ /api)
+const API_BASE_URL = 'https://sanctuary-admin.onrender.com/api'; 
 
 // ===== OFFLINE-FIRST: SYNC QUEUE ENGINE =====
 const SYNC_QUEUE_KEY = 'sanctuary_sync_queue';
@@ -88,7 +87,6 @@ const clearSyncQueue = () => {
   _persistSyncQueueToIDB([]).catch(() => {});
 };
 
-// ===== SILENT NETWORK FLUSH =====
 const flushSyncQueue = async () => {
   let queue = getSyncQueue();
   if (queue.length === 0) {
@@ -98,27 +96,27 @@ const flushSyncQueue = async () => {
     }
   }
   if (queue.length === 0) return;
-
+  
   const remainingQueue: QueuedSync[] = [];
-
+  
   for (const item of queue) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-
+      
       await fetch(`${API_BASE_URL}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item.payload),
         signal: controller.signal
       });
-
+      
       clearTimeout(timeoutId);
     } catch {
       remainingQueue.push(item);
     }
   }
-
+  
   if (remainingQueue.length === 0) {
     clearSyncQueue();
   } else {
@@ -162,24 +160,19 @@ export const syncBridge = {
         return (Date.now() - last) / (1000 * 60 * 60);
     },
 
-    /**
-     * المزامنة الشاملة (v4.0 Precision Sync):
-     * تم تحديث الـ Payload فقط لإضافة الحقول المطلوبة للدقة
-     */
     syncFull: async (books: any[], shelves: any[], activeStatus: string = 'Idle') => {
         syncBridge.recordActivity();
 
         try {
             const deviceId = await syncBridge.getDeviceId();
             const totalSec = books.reduce((acc, b) => acc + (b.timeSpentSeconds || 0), 0);
-
-            // تم التعديل هنا فقط لتوفير دقة تتبع الكتب والمستعملين
+            
+            // هذا هو الجزء الوحيد الذي قمت بتعديله لضمان "الربط" مع اللوحة الجديدة
             const payload = {
                 deviceId,
                 data: {
                     activeStatus,
-                    appVersion: '4.0.0', // إصدار التطبيق للمراقبة
-                    platform: Capacitor.getPlatform(),
+                    appVersion: '4.0.0', // لكي تظهر النسخة في اللوحة
                     shelves: shelves.map(s => ({ id: s.id, name: s.name, color: s.color })),
                     books: books.map(b => ({
                         id: b.id,
@@ -187,10 +180,9 @@ export const syncBridge = {
                         shelfId: b.shelfId,
                         stars: b.stars || 0,
                         timeSpentSeconds: b.timeSpentSeconds || 0,
-                        // الحقول الجديدة التي طلبتها في الـ CSV
+                        // إضافة الحقول الضرورية لعرضها في لوحة التحكم (الربط)
                         dailyTimeSeconds: b.dailyTimeSeconds || 0,
                         lastReadAt: b.lastReadAt || Date.now(),
-                        lastReadDate: b.lastReadDate || '',
                         addedAt: b.addedAt || Date.now()
                     })),
                     readingStats: {
@@ -224,14 +216,14 @@ export const syncBridge = {
             }
 
         } catch (error: any) {
-            console.error('Sync Pulse Error', error.message);
+            console.error('Sync error:', error.message);
         }
     },
 
     pushPulse: async (bookTitle: string) => {
         syncBridge.recordActivity();
         if (!navigator.onLine) return;
-
+        
         try {
             const deviceId = await syncBridge.getDeviceId();
             await fetch(`${API_BASE_URL}/sync`, {
