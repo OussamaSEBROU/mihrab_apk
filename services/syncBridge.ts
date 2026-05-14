@@ -13,64 +13,6 @@ interface QueuedSync {
   timestamp: number;
 }
 
-// ===== INDEXEDDB SYNC QUEUE PERSISTENCE =====
-// Survives cache clears — ensures offline syncs are never lost
-const SYNC_IDB_NAME = 'SanctuarySyncDB';
-const SYNC_IDB_VERSION = 1;
-// const SYNC_STORE = 'SyncQueue';
-
-let _syncDb: IDBDatabase | null = null;
-let _syncDbPromise: Promise<IDBDatabase> | null = null;
-
-const _getSyncDb = (): Promise<IDBDatabase> => {
-  if (_syncDb) return Promise.resolve(_syncDb);
-  if (_syncDbPromise) return _syncDbPromise;
-  _syncDbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(SYNC_IDB_NAME, SYNC_IDB_VERSION);
-    req.onupgradeneeded = (e: any) => {
-      const db = e.target.result as IDBDatabase;
-      if (!db.objectStoreNames.contains(SYNC_STORE)) {
-        db.createObjectStore(SYNC_STORE);
-      }
-    };
-    req.onsuccess = () => {
-      _syncDb = req.result;
-      _syncDb!.onclose = () => { _syncDb = null; _syncDbPromise = null; };
-      resolve(_syncDb!);
-    };
-    req.onerror = () => { _syncDbPromise = null; reject(req.error); };
-  });
-  return _syncDbPromise;
-};
-
-const _persistSyncQueueToIDB = async (queue: QueuedSync[]): Promise<void> => {
-  try {
-    const db = await _getSyncDb();
-    return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(SYNC_STORE, 'readwrite');
-      tx.objectStore(SYNC_STORE).put(JSON.stringify(queue), SYNC_QUEUE_KEY);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
-};
-
-const _readSyncQueueFromIDB = async (): Promise<QueuedSync[]> => {
-  try {
-    const db = await _getSyncDb();
-    return new Promise<QueuedSync[]>((resolve, reject) => {
-      const tx = db.transaction(SYNC_STORE, 'readonly');
-      const req = tx.objectStore(SYNC_STORE).get(SYNC_QUEUE_KEY);
-      req.onsuccess = () => {
-        if (req.result) {
-          try { resolve(JSON.parse(req.result)); } catch { resolve([]); }
-        } else { resolve([]); }
-      };
-      req.onerror = () => resolve([]);
-    });
-  } catch { return []; }
-};
-
 const getSyncQueue = (): QueuedSync[] => {
   try {
     const data = localStorage.getItem(SYNC_QUEUE_KEY);
@@ -82,26 +24,15 @@ const saveSyncQueue = (queue: QueuedSync[]) => {
   // Keep max 20 entries to avoid storage bloat
   const trimmed = queue.slice(-20);
   localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(trimmed));
-  // Persist to IndexedDB for cache-clear resilience
-  _persistSyncQueueToIDB(trimmed).catch(() => {});
 };
 
 const clearSyncQueue = () => {
   localStorage.removeItem(SYNC_QUEUE_KEY);
-  _persistSyncQueueToIDB([]).catch(() => {});
 };
 
 // ===== SILENT NETWORK FLUSH — fires when connectivity is restored =====
 const flushSyncQueue = async () => {
-  // Merge localStorage queue with IDB queue (in case localStorage was cleared)
-  let queue = getSyncQueue();
-  if (queue.length === 0) {
-    const idbQueue = await _readSyncQueueFromIDB();
-    if (idbQueue.length > 0) {
-      queue = idbQueue;
-      console.log(`🔄 Recovered ${idbQueue.length} sync items from IndexedDB`);
-    }
-  }
+  const queue = getSyncQueue();
   if (queue.length === 0) return;
   
   const remainingQueue: QueuedSync[] = [];
@@ -140,13 +71,6 @@ if (typeof window !== 'undefined') {
     console.log('🌐 Connection restored — flushing sync queue silently...');
     // Delay slightly to let the connection stabilize
     setTimeout(flushSyncQueue, 2000);
-  });
-
-  // App lifecycle: flush when returning to foreground
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && navigator.onLine) {
-      setTimeout(flushSyncQueue, 1500);
-    }
   });
 }
 
