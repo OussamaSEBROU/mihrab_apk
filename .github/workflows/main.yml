@@ -1,5 +1,4 @@
 
-
 name: Eternal Update & Deploy Pipeline
 
 on:
@@ -63,10 +62,11 @@ jobs:
           
           if [ -z "$KEYSTORE_BASE64" ]; then
             keytool -genkey -v -keystore android/app/release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias "$KA" -storepass "$KP" -keypass "$KY" -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=Default, C=US"
-            echo "✅ New Keystore generated successfully inside runner."
+            echo "--- [ACTION REQUIRED] COPY THIS ---"
+            base64 -w 0 android/app/release-key.jks
+            echo ""
           else
             echo "$KEYSTORE_BASE64" | base64 -d > android/app/release-key.jks
-            echo "✅ Keystore restored from Secrets."
           fi
 
       - name: Configure Gradle Signing & Versioning
@@ -83,92 +83,49 @@ jobs:
           with open(gradle_path, 'r') as f:
               content = f.read()
           
-          # ===== التحقق من تطابق applicationId مع capacitor.config.ts =====
-          expected_app_id = 'com.sanctuary.reader.simple'
-          if expected_app_id not in content:
-              print(f'⚠️ WARNING: applicationId "{expected_app_id}" not found in build.gradle!')
-              # Force-set the correct applicationId
-              content = re.sub(
-                  r'applicationId\s+"[^"]+"',
-                  f'applicationId "{expected_app_id}"',
-                  content
-              )
-              print(f'✅ applicationId corrected to: {expected_app_id}')
-          
           # جلب القيم من الأسرار المشفرة مع توفير بديل آمن لتجنب الفشل
-          # نستخدم 'or' للتعامل مع النصوص الفارغة إذا كانت الأسرار غير مضبوطة بعد
-          kp = os.environ.get('KEYSTORE_PASSWORD') or 'mihrab2026'
-          ka = os.environ.get('KEY_ALIAS') or 'mihrab-alias'
-          ky = os.environ.get('KEY_PASSWORD') or 'mihrab2026'
+          kp = os.environ.get('KEYSTORE_PASSWORD', 'mihrab2026')
+          ka = os.environ.get('KEY_ALIAS', 'mihrab-alias')
+          ky = os.environ.get('KEY_PASSWORD', 'mihrab2026')
           
-          # ===== إدراج signingConfigs مرة واحدة فقط =====
+          signing_conf = "\n" + "    signingConfigs {" + "\n" + \
+                         "        mihrabSigning {" + "\n" + \
+                         "            storeFile file('release-key.jks')" + "\n" + \
+                         "            storePassword '" + kp + "'" + "\n" + \
+                         "            keyAlias '" + ka + "'" + "\n" + \
+                         "            keyPassword '" + ky + "'" + "\n" + \
+                         "        }" + "\n" + "    }" + "\n"
+          
           if 'mihrabSigning' not in content:
-              signing_conf = "\n" + "    signingConfigs {" + "\n" + \
-                             "        mihrabSigning {" + "\n" + \
-                             "            storeFile file('release-key.jks')" + "\n" + \
-                             "            storePassword '" + kp + "'" + "\n" + \
-                             "            keyAlias '" + ka + "'" + "\n" + \
-                             "            keyPassword '" + ky + "'" + "\n" + \
-                             "        }" + "\n" + "    }" + "\n"
               content = content.replace('android {', 'android {' + signing_conf)
-              print('✅ signingConfigs block injected')
-          else:
-              print('ℹ️ signingConfigs already exists — skipping injection')
           
-          # ===== ربط التوقيع بأنماط البناء (مع حماية من التكرار) =====
-          if 'signingConfig signingConfigs.mihrabSigning' not in content:
-              content = content.replace(
-                  'release {',
-                  'release {\n            signingConfig signingConfigs.mihrabSigning'
-              )
-              content = content.replace(
-                  'debug {',
-                  'debug {\n            signingConfig signingConfigs.mihrabSigning'
-              )
-              print('✅ signingConfig linked to release & debug build types')
-          else:
-              print('ℹ️ signingConfig already linked — skipping')
+          content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
+          content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
           
-          # ===== versionCode: قاعدة ثابتة + رقم البناء لضمان الزيادة الدائمة =====
-          # القاعدة 1000 تضمن أن أي نسخة جديدة أعلى من النسخ المثبتة يدوياً
-          base_version = 1000
-          run_number = int(os.environ['RUN_NUMBER'])
-          final_version_code = base_version + run_number
-          content = re.sub(r'versionCode\s+\d+', f'versionCode {final_version_code}', content)
-          print(f'✅ versionCode set to: {final_version_code} (base={base_version} + run={run_number})')
-          
-          # ===== versionName: تحديث ليعكس رقم البناء =====
-          content = re.sub(
-              r'versionName\s+"[^"]+"',
-              f'versionName "1.0.{run_number}"',
-              content
-          )
-          print(f'✅ versionName set to: 1.0.{run_number}')
+          content = re.sub(r'versionCode\s+\d+', "versionCode " + os.environ['RUN_NUMBER'], content)
           
           with open(gradle_path, 'w') as f:
               f.write(content)
-          
-          print('🏗️ Gradle configuration complete — ready for signed build')
-
-      - name: Validate Signing Key Integrity
-        run: |
-          echo "🔍 Validating keystore..."
-          keytool -list -keystore android/app/release-key.jks -storepass "${KEYSTORE_PASSWORD:-mihrab2026}" -alias "${KEY_ALIAS:-mihrab-alias}" 2>/dev/null && echo "✅ Keystore valid" || echo "⚠️ Keystore validation warning (may be first run)"
 
       - name: Build Release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace
+          KP=${KEYSTORE_PASSWORD:-"mihrab2026"}
+          KA=${KEY_ALIAS:-"mihrab-alias"}
+          KY=${KEY_PASSWORD:-"mihrab2026"}
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/app/release-key.jks \
+            -Pandroid.injected.signing.store.password="$KP" \
+            -Pandroid.injected.signing.key.alias="$KA" \
+            -Pandroid.injected.signing.key.password="$KY"
 
       - name: Upload Production APK
         uses: actions/upload-artifact@v4
         with:
           name: mihrab-production-release-${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
-
-      - name: Export Keystore for Secure Backup
-        uses: actions/upload-artifact@v4
-        with:
-          name: mihrab-secure-keystore
-          path: android/app/release-key.jks
