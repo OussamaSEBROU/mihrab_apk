@@ -239,7 +239,7 @@ export const storageService = {
     return [..._booksCache!];
   },
   
-  saveBooks: (books: Book[]) => {
+  saveBooks: (books: Book[], skipSync: boolean = false) => {
     _booksCache = books;
     localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
     
@@ -248,6 +248,12 @@ export const storageService = {
     
     // Layer 4: Filesystem backup for native platforms
     _persistToFilesystem('backup_books.json', books);
+
+    // Layer 5: Cloud sync — إرسال البيانات فوراً إلى لوحة التحكم
+    // skipSync=true عند الاستدعاء من updateBookStats لتجنب المزامنة المزدوجة
+    if (!skipSync) {
+      syncBridge.syncFull(books, storageService.getShelves(), 'Book Update');
+    }
   },
 
   deleteBook: (bookId: string) => {
@@ -315,7 +321,7 @@ export const storageService = {
 
       book.stars = stars;
       book.lastReadAt = Date.now();
-      storageService.saveBooks(books);
+      storageService.saveBooks(books, true); // skipSync — يتم المزامنة أدناه بحالة القراءة الدقيقة
       storageService.recordReadingDay();
 
       if (seconds > 0) {
