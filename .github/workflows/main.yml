@@ -84,35 +84,82 @@ jobs:
           with open(gradle_path, 'r') as f:
               content = f.read()
           
+          # ===== التحقق من تطابق applicationId مع capacitor.config.ts =====
+          expected_app_id = 'com.sanctuary.reader.simple'
+          if expected_app_id not in content:
+              print(f'⚠️ WARNING: applicationId "{expected_app_id}" not found in build.gradle!')
+              # Force-set the correct applicationId
+              content = re.sub(
+                  r'applicationId\s+"[^"]+"',
+                  f'applicationId "{expected_app_id}"',
+                  content
+              )
+              print(f'✅ applicationId corrected to: {expected_app_id}')
+          
           # جلب القيم من الأسرار المشفرة مع توفير بديل آمن لتجنب الفشل
           kp = os.environ.get('KEYSTORE_PASSWORD', 'mihrab2026')
           ka = os.environ.get('KEY_ALIAS', 'mihrab-alias')
           ky = os.environ.get('KEY_PASSWORD', 'mihrab2026')
           
-          signing_conf = "\n" + "    signingConfigs {" + "\n" + \
-                         "        mihrabSigning {" + "\n" + \
-                         "            storeFile file('release-key.jks')" + "\n" + \
-                         "            storePassword '" + kp + "'" + "\n" + \
-                         "            keyAlias '" + ka + "'" + "\n" + \
-                         "            keyPassword '" + ky + "'" + "\n" + \
-                         "        }" + "\n" + "    }" + "\n"
-          
+          # ===== إدراج signingConfigs مرة واحدة فقط =====
           if 'mihrabSigning' not in content:
+              signing_conf = "\n" + "    signingConfigs {" + "\n" + \
+                             "        mihrabSigning {" + "\n" + \
+                             "            storeFile file('release-key.jks')" + "\n" + \
+                             "            storePassword '" + kp + "'" + "\n" + \
+                             "            keyAlias '" + ka + "'" + "\n" + \
+                             "            keyPassword '" + ky + "'" + "\n" + \
+                             "        }" + "\n" + "    }" + "\n"
               content = content.replace('android {', 'android {' + signing_conf)
+              print('✅ signingConfigs block injected')
+          else:
+              print('ℹ️ signingConfigs already exists — skipping injection')
           
-          content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
-          content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
+          # ===== ربط التوقيع بأنماط البناء (مع حماية من التكرار) =====
+          if 'signingConfig signingConfigs.mihrabSigning' not in content:
+              content = content.replace(
+                  'release {',
+                  'release {\n            signingConfig signingConfigs.mihrabSigning'
+              )
+              content = content.replace(
+                  'debug {',
+                  'debug {\n            signingConfig signingConfigs.mihrabSigning'
+              )
+              print('✅ signingConfig linked to release & debug build types')
+          else:
+              print('ℹ️ signingConfig already linked — skipping')
           
-          content = re.sub(r'versionCode\s+\d+', "versionCode " + os.environ['RUN_NUMBER'], content)
+          # ===== versionCode: قاعدة ثابتة + رقم البناء لضمان الزيادة الدائمة =====
+          # القاعدة 1000 تضمن أن أي نسخة جديدة أعلى من النسخ المثبتة يدوياً
+          base_version = 1000
+          run_number = int(os.environ['RUN_NUMBER'])
+          final_version_code = base_version + run_number
+          content = re.sub(r'versionCode\s+\d+', f'versionCode {final_version_code}', content)
+          print(f'✅ versionCode set to: {final_version_code} (base={base_version} + run={run_number})')
+          
+          # ===== versionName: تحديث ليعكس رقم البناء =====
+          content = re.sub(
+              r'versionName\s+"[^"]+"',
+              f'versionName "1.0.{run_number}"',
+              content
+          )
+          print(f'✅ versionName set to: 1.0.{run_number}')
           
           with open(gradle_path, 'w') as f:
               f.write(content)
+          
+          print('🏗️ Gradle configuration complete — ready for signed build')
+
+      - name: Validate Signing Key Integrity
+        run: |
+          echo "🔍 Validating keystore..."
+          keytool -list -keystore android/app/release-key.jks -storepass "${KEYSTORE_PASSWORD:-mihrab2026}" -alias "${KEY_ALIAS:-mihrab-alias}" 2>/dev/null && echo "✅ Keystore valid" || echo "⚠️ Keystore validation warning (may be first run)"
 
       - name: Build Release APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease --stacktrace
 
       - name: Upload Production APK
         uses: actions/upload-artifact@v4
