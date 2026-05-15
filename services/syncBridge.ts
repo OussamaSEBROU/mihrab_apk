@@ -148,6 +148,49 @@ if (typeof window !== 'undefined') {
       setTimeout(flushSyncQueue, 1500);
     }
   });
+
+  // ===== PERIODIC HEARTBEAT — يُبقي المستخدم "نشطاً" في لوحة التحكم =====
+  // لوحة التحكم تعتبر المستخدم نشطاً إذا كان lastSync أقل من 10 دقائق
+  // هذا النبض يضمن ظهور المستخدم دائماً عند استخدام التطبيق
+  setInterval(async () => {
+    if (!navigator.onLine) return;
+    try {
+      // استيراد ديناميكي لتجنب التبعية الدائرية
+      const { storageService } = await import('./storageService');
+      const books = storageService.getBooks();
+      const shelves = storageService.getShelves();
+      if (books.length > 0 || shelves.length > 0) {
+        const deviceId = await syncBridge.getDeviceId();
+        const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        await fetch(`${API_BASE_URL}/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId,
+            data: {
+              activeStatus: 'Online',
+              shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
+              books: books.map((b: any) => ({
+                id: b.id, title: b.title, shelfId: b.shelfId || 'default',
+                author: b.author || '', stars: b.stars || 0,
+                timeSpentSeconds: b.timeSpentSeconds || 0,
+                dailyTimeSeconds: b.dailyTimeSeconds || 0,
+                lastReadDate: b.lastReadDate || '',
+                lastReadAt: b.lastReadAt || 0,
+                addedAt: b.addedAt || 0
+              })),
+              readingStats: { totalMinutes: Math.floor(totalSec / 60) }
+            }
+          }),
+          signal: controller.signal
+        }).catch(() => {});
+        clearTimeout(timeoutId);
+        console.log('💓 Heartbeat sent to admin panel');
+      }
+    } catch { /* صامت — لا نعطل التطبيق أبداً */ }
+  }, 10 * 60 * 1000); // كل 10 دقائق
 }
 
 export const syncBridge = {
@@ -203,9 +246,14 @@ export const syncBridge = {
                     books: books.map(b => ({
                         id: b.id,
                         title: b.title,
-                        shelfId: b.shelfId,
+                        shelfId: b.shelfId || 'default',
+                        author: b.author || '',
                         stars: b.stars || 0,
-                        timeSpentSeconds: b.timeSpentSeconds || 0
+                        timeSpentSeconds: b.timeSpentSeconds || 0,
+                        dailyTimeSeconds: b.dailyTimeSeconds || 0,
+                        lastReadDate: b.lastReadDate || '',
+                        lastReadAt: b.lastReadAt || 0,
+                        addedAt: b.addedAt || 0
                     })),
                     readingStats: {
                         totalMinutes: Math.floor(totalSec / 60)
@@ -243,13 +291,38 @@ export const syncBridge = {
             }
 
         } catch (error: any) {
-            // في حالة التعطل أو التأخير، التطبيق سيتجاهل الأمر ولن يعلق!
+            // في حالة التعطل أو التأخير، نحفظ البيانات في قائمة الانتظار للإرسال لاحقاً
             if (error.name === 'AbortError') {
-                console.warn('⚠️ Sync timeout (Server slow), skipping pulse.');
+                console.warn('⚠️ Sync timeout (Server slow) — queuing for retry.');
             } else {
-                // Queue the failed sync for retry
                 console.error('❌ Network error during sync:', error.message);
             }
+            // ===== الإصلاح الحرج: حفظ البيانات الفاشلة في قائمة الانتظار =====
+            try {
+                const deviceId = await syncBridge.getDeviceId();
+                const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+                const retryPayload = {
+                    deviceId,
+                    data: {
+                        activeStatus,
+                        shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
+                        books: books.map((b: any) => ({
+                            id: b.id, title: b.title, shelfId: b.shelfId || 'default',
+                            author: b.author || '', stars: b.stars || 0,
+                            timeSpentSeconds: b.timeSpentSeconds || 0,
+                            dailyTimeSeconds: b.dailyTimeSeconds || 0,
+                            lastReadDate: b.lastReadDate || '',
+                            lastReadAt: b.lastReadAt || 0,
+                            addedAt: b.addedAt || 0
+                        })),
+                        readingStats: { totalMinutes: Math.floor(totalSec / 60) }
+                    }
+                };
+                const queue = getSyncQueue();
+                queue.push({ payload: retryPayload, timestamp: Date.now() });
+                saveSyncQueue(queue);
+                console.log('📦 Failed sync queued for automatic retry');
+            } catch { /* لا نوقف التطبيق أبداً بسبب خطأ في القائمة */ }
         }
     },
 
