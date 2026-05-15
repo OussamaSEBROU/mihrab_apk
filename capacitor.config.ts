@@ -1,7 +1,7 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.sanctuary.reader.simple',
+  appId: 'com.sanctuary.mihrab.app',        // ← هذا السطر فقط تغيّر
   appName: 'Sanctuary',
   webDir: 'dist',
   server: {
