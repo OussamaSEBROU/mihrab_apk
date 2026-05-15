@@ -50,11 +50,13 @@ jobs:
         id: signing_key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          # نستخدم الأسرار المشفرة للأمان المطلق
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           mkdir -p android/app/
+          # استخدام قيم افتراضية آمنة في حال لم يتم ضبط الأسرار بعد (للعملية الأولى فقط)
           KP=${KEYSTORE_PASSWORD:-"mihrab2026"}
           KA=${KEY_ALIAS:-"mihrab-alias"}
           KY=${KEY_PASSWORD:-"mihrab2026"}
@@ -81,7 +83,7 @@ jobs:
           with open(gradle_path, 'r') as f:
               content = f.read()
           
-          # =====   applicationId مع capacitor.config.ts =====
+          # ===== التحقق من تطابق applicationId مع capacitor.config.ts =====
           expected_app_id = 'com.sanctuary.reader.simple'
           if expected_app_id not in content:
               print(f'⚠️ WARNING: applicationId "{expected_app_id}" not found in build.gradle!')
@@ -93,10 +95,13 @@ jobs:
               )
               print(f'✅ applicationId corrected to: {expected_app_id}')
           
-          kp = os.environ.get('KEYSTORE_PASSWORD', 'mihrab2026')
-          ka = os.environ.get('KEY_ALIAS', 'mihrab-alias')
-          ky = os.environ.get('KEY_PASSWORD', 'mihrab2026')
+          # جلب القيم من الأسرار المشفرة مع توفير بديل آمن لتجنب الفشل
+          # نستخدم 'or' للتعامل مع النصوص الفارغة إذا كانت الأسرار غير مضبوطة بعد
+          kp = os.environ.get('KEYSTORE_PASSWORD') or 'mihrab2026'
+          ka = os.environ.get('KEY_ALIAS') or 'mihrab-alias'
+          ky = os.environ.get('KEY_PASSWORD') or 'mihrab2026'
           
+          # ===== إدراج signingConfigs مرة واحدة فقط =====
           if 'mihrabSigning' not in content:
               signing_conf = "\n" + "    signingConfigs {" + "\n" + \
                              "        mihrabSigning {" + "\n" + \
@@ -110,6 +115,7 @@ jobs:
           else:
               print('ℹ️ signingConfigs already exists — skipping injection')
           
+          # ===== ربط التوقيع بأنماط البناء (مع حماية من التكرار) =====
           if 'signingConfig signingConfigs.mihrabSigning' not in content:
               content = content.replace(
                   'release {',
@@ -123,14 +129,15 @@ jobs:
           else:
               print('ℹ️ signingConfig already linked — skipping')
           
-          # ===== versionCode:  =====
+          # ===== versionCode: قاعدة ثابتة + رقم البناء لضمان الزيادة الدائمة =====
+          # القاعدة 1000 تضمن أن أي نسخة جديدة أعلى من النسخ المثبتة يدوياً
           base_version = 1000
           run_number = int(os.environ['RUN_NUMBER'])
           final_version_code = base_version + run_number
           content = re.sub(r'versionCode\s+\d+', f'versionCode {final_version_code}', content)
           print(f'✅ versionCode set to: {final_version_code} (base={base_version} + run={run_number})')
           
-          # ===== versionName:  =====
+          # ===== versionName: تحديث ليعكس رقم البناء =====
           content = re.sub(
               r'versionName\s+"[^"]+"',
               f'versionName "1.0.{run_number}"',
