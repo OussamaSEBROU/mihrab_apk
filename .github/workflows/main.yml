@@ -166,3 +166,9 @@ jobs:
         with:
           name: mihrab-production-release-${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Export Keystore for Secure Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihrab-secure-keystore
+          path: android/app/release-key.jks
