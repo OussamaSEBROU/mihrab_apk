@@ -675,3 +675,4 @@ if (typeof window !== 'undefined') {
     } catch {}
   }, 5 * 60 * 1000); // كل 5 دقائق
 }
+
