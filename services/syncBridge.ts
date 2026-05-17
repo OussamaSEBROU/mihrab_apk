@@ -1,10 +1,13 @@
 import { Device } from '@capacitor/device';
+import { App as CapApp } from '@capacitor/app';
 
 // رابط الـ Backend الصحيح كما في موقع Render
 const API_BASE_URL = 'https://mihrab-backend.onrender.com/api';
 
 // ===== STABLE DEVICE ID — يبقى ثابتاً حتى لو فشل Capacitor =====
 const DEVICE_ID_KEY = 'sanctuary_stable_device_id';
+const FIRST_VERSION_KEY = 'sanctuary_first_app_version';
+
 const _getStableFallbackId = (): string => {
   let id = localStorage.getItem(DEVICE_ID_KEY);
   if (!id) {
@@ -24,13 +27,104 @@ const _wakeUpServer = async (): Promise<void> => {
     await fetch(`${API_BASE_URL}/test`, { signal: ctrl.signal });
     clearTimeout(tid);
     _serverAwake = true;
-    // بعد 5 دقائق، نعتبر أن السيرفر قد ينام مجدداً
     setTimeout(() => { _serverAwake = false; }, 5 * 60 * 1000);
   } catch { /* صامت */ }
 };
 
+// ===== APP VERSION HELPER =====
+const _getAppVersion = async (): Promise<string> => {
+  try {
+    const info = await CapApp.getInfo();
+    return info.version || 'unknown';
+  } catch { return 'unknown'; }
+};
+
+const _getHasUpdated = async (): Promise<boolean> => {
+  try {
+    const ver = await _getAppVersion();
+    const first = localStorage.getItem(FIRST_VERSION_KEY);
+    if (!first) { localStorage.setItem(FIRST_VERSION_KEY, ver); return false; }
+    return first !== ver;
+  } catch { return false; }
+};
+
+// ===== بناء الحمولة الكاملة مع كل التفاصيل المطلوبة =====
+const _buildFullPayload = async (books: any[], shelves: any[], activeStatus: string) => {
+  const deviceId = await syncBridge.getDeviceId();
+  const appVersion = await _getAppVersion();
+  const hasUpdated = await _getHasUpdated();
+
+  const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+  const totalStars = books.reduce((acc: number, b: any) => acc + (b.stars || 0), 0);
+
+  // ===== إحصائيات اليوم =====
+  const today = new Date().toISOString().split('T')[0];
+  const todayBooks = books.filter((b: any) => b.lastReadDate === today);
+  const dailySeconds = todayBooks.reduce((acc: number, b: any) => acc + (b.dailyTimeSeconds || 0), 0);
+
+  // ===== إحصائيات الأسبوع =====
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const weeklyBooks = books.filter((b: any) => b.lastReadAt && b.lastReadAt > weekAgo);
+  const weeklySeconds = weeklyBooks.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+
+  // ===== آخر كتاب مقروء =====
+  const sortedByRead = [...books].filter((b: any) => b.lastReadAt).sort((a: any, b: any) => (b.lastReadAt || 0) - (a.lastReadAt || 0));
+  const lastBook = sortedByRead[0] || null;
+
+  // ===== إحصائيات كل رف =====
+  const shelfStats = shelves.map((s: any) => {
+    const shelfBooks = books.filter((b: any) => b.shelfId === s.id);
+    const shelfSec = shelfBooks.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+    const shelfStars = shelfBooks.reduce((acc: number, b: any) => acc + (b.stars || 0), 0);
+    return {
+      id: s.id,
+      name: s.name,
+      color: s.color,
+      bookCount: shelfBooks.length,
+      totalMinutes: Math.floor(shelfSec / 60),
+      totalStars: shelfStars,
+      bookNames: shelfBooks.map((b: any) => b.title)
+    };
+  });
+
+  return {
+    deviceId,
+    data: {
+      activeStatus,
+      appVersion,
+      hasUpdated,
+      totalDownloads: books.length,
+      shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
+      books: books.map((b: any) => ({
+        id: b.id,
+        title: b.title,
+        shelfId: b.shelfId || 'default',
+        author: b.author || '',
+        stars: b.stars || 0,
+        timeSpentSeconds: b.timeSpentSeconds || 0,
+        dailyTimeSeconds: b.dailyTimeSeconds || 0,
+        lastReadDate: b.lastReadDate || '',
+        lastReadAt: b.lastReadAt || 0,
+        addedAt: b.addedAt || 0,
+        sessionTimeSeconds: b.sessionTimeSeconds || 0
+      })),
+      readingStats: {
+        totalMinutes: Math.floor(totalSec / 60),
+        totalStars,
+        dailyMinutes: Math.floor(dailySeconds / 60),
+        weeklyMinutes: Math.floor(weeklySeconds / 60),
+        lastReadBook: lastBook ? {
+          title: lastBook.title,
+          minutes: Math.floor((lastBook.timeSpentSeconds || 0) / 60),
+          lastReadAt: lastBook.lastReadAt
+        } : null,
+        shelfStats
+      }
+    }
+  };
+};
+
 // ===== OFFLINE-FIRST: SYNC QUEUE ENGINE =====
-// يحتفظ بالعمليات المعلقة عند عدم وجود اتصال ويرسلها تلقائياً عند العودة
 const SYNC_QUEUE_KEY = 'sanctuary_sync_queue';
 const LAST_ACTIVITY_KEY = 'sanctuary_last_activity';
 
@@ -40,7 +134,6 @@ interface QueuedSync {
 }
 
 // ===== INDEXEDDB SYNC QUEUE PERSISTENCE =====
-// Survives cache clears — ensures offline syncs are never lost
 const SYNC_IDB_NAME = 'SanctuarySyncDB';
 const SYNC_IDB_VERSION = 1;
 const SYNC_STORE = 'SyncQueue';
@@ -105,10 +198,8 @@ const getSyncQueue = (): QueuedSync[] => {
 };
 
 const saveSyncQueue = (queue: QueuedSync[]) => {
-  // Keep max 20 entries to avoid storage bloat
   const trimmed = queue.slice(-20);
   localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(trimmed));
-  // Persist to IndexedDB for cache-clear resilience
   _persistSyncQueueToIDB(trimmed).catch(() => {});
 };
 
@@ -117,9 +208,8 @@ const clearSyncQueue = () => {
   _persistSyncQueueToIDB([]).catch(() => {});
 };
 
-// ===== SILENT NETWORK FLUSH — fires when connectivity is restored =====
+// ===== SILENT NETWORK FLUSH =====
 const flushSyncQueue = async () => {
-  // Merge localStorage queue with IDB queue (in case localStorage was cleared)
   let queue = getSyncQueue();
   if (queue.length === 0) {
     const idbQueue = await _readSyncQueueFromIDB();
@@ -147,7 +237,6 @@ const flushSyncQueue = async () => {
       
       clearTimeout(timeoutId);
     } catch {
-      // If still failing, keep in queue for next retry
       remainingQueue.push(item);
     }
   }
@@ -161,63 +250,44 @@ const flushSyncQueue = async () => {
   }
 };
 
-// ===== AUTO-FLUSH LISTENER — silent, zero-UI, no spinners =====
+// ===== AUTO-FLUSH LISTENER =====
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     console.log('🌐 Connection restored — flushing sync queue silently...');
-    // Delay slightly to let the connection stabilize
     setTimeout(flushSyncQueue, 2000);
   });
 
-  // App lifecycle: flush when returning to foreground
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && navigator.onLine) {
       setTimeout(flushSyncQueue, 1500);
     }
   });
 
-  // ===== IMMEDIATE STARTUP SYNC — يُسجل المستخدم فوراً عند فتح التطبيق =====
+  // ===== IMMEDIATE STARTUP SYNC — مزامنة فورية عند فتح التطبيق =====
   setTimeout(async () => {
     if (!navigator.onLine) return;
     try {
       await _wakeUpServer();
       const { storageService } = await import('./storageService');
-      const books = storageService.getBooks();
-      const shelves = storageService.getShelves();
-      const deviceId = await syncBridge.getDeviceId();
-      const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+      const payload = await _buildFullPayload(
+        storageService.getBooks(),
+        storageService.getShelves(),
+        'Online'
+      );
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
       await fetch(`${API_BASE_URL}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId,
-          data: {
-            activeStatus: 'Online',
-            shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
-            books: books.map((b: any) => ({
-              id: b.id, title: b.title, shelfId: b.shelfId || 'default',
-              author: b.author || '', stars: b.stars || 0,
-              timeSpentSeconds: b.timeSpentSeconds || 0,
-              dailyTimeSeconds: b.dailyTimeSeconds || 0,
-              lastReadDate: b.lastReadDate || '',
-              lastReadAt: b.lastReadAt || 0,
-              addedAt: b.addedAt || 0
-            })),
-            readingStats: { totalMinutes: Math.floor(totalSec / 60) }
-          }
-        }),
+        body: JSON.stringify(payload),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
-      console.log('🚀 Startup sync completed — device registered with admin panel');
+      console.log('🚀 Startup sync completed — device registered');
     } catch { /* صامت */ }
-  }, 3000); // بعد 3 ثوانٍ من التشغيل
+  }, 3000);
 
-  // ===== PERIODIC HEARTBEAT — يُبقي المستخدم "نشطاً" في لوحة التحكم =====
-  // لوحة التحكم تعتبر المستخدم نشطاً إذا كان lastSync أقل من 5 دقائق
-  // نبض كل 3 دقائق يضمن ظهور المستخدم دائماً عند استخدام التطبيق
+  // ===== PERIODIC HEARTBEAT — مزامنة كل دقيقة واحدة بالضبط =====
   setInterval(async () => {
     if (!navigator.onLine) return;
     try {
@@ -225,58 +295,37 @@ if (typeof window !== 'undefined') {
       const books = storageService.getBooks();
       const shelves = storageService.getShelves();
       if (books.length > 0 || shelves.length > 0) {
-        const deviceId = await syncBridge.getDeviceId();
-        const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
         await _wakeUpServer();
+        const payload = await _buildFullPayload(books, shelves, 'Online');
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
         await fetch(`${API_BASE_URL}/sync`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deviceId,
-            data: {
-              activeStatus: 'Online',
-              shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
-              books: books.map((b: any) => ({
-                id: b.id, title: b.title, shelfId: b.shelfId || 'default',
-                author: b.author || '', stars: b.stars || 0,
-                timeSpentSeconds: b.timeSpentSeconds || 0,
-                dailyTimeSeconds: b.dailyTimeSeconds || 0,
-                lastReadDate: b.lastReadDate || '',
-                lastReadAt: b.lastReadAt || 0,
-                addedAt: b.addedAt || 0
-              })),
-              readingStats: { totalMinutes: Math.floor(totalSec / 60) }
-            }
-          }),
+          body: JSON.stringify(payload),
           signal: controller.signal
         }).catch(() => {});
         clearTimeout(timeoutId);
-        console.log('💓 Heartbeat sent to admin panel');
+        console.log('💓 Heartbeat sent — full data synced');
       }
-    } catch { /* صامت — لا نعطل التطبيق أبداً */ }
-  }, 3 * 60 * 1000); // كل 3 دقائق
+    } catch { /* صامت */ }
+  }, 60 * 1000); // ===== كل دقيقة واحدة بالضبط =====
 }
 
 export const syncBridge = {
-    // وظيفة جلب بصمة الجهاز بأمان (تعديل Safe-Mode)
     getDeviceId: async () => {
         try {
-            // نحاول جلب البصمة الحقيقية من الهاتف
             const info = await Device.getId();
-            // حفظ البصمة الحقيقية كنسخة احتياطية
             if (info.identifier) {
               localStorage.setItem(DEVICE_ID_KEY, info.identifier);
             }
             return info.identifier;
         } catch (e) {
-            // في حالة فشل الاتصال بالمكتبة — نستخدم بصمة ثابتة مُخزّنة
             return _getStableFallbackId();
         }
     },
 
-    // ===== LAST ACTIVITY TRACKER — for 8-hour re-engagement =====
+    // ===== LAST ACTIVITY TRACKER =====
     recordActivity: () => {
         localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
     },
@@ -292,45 +341,15 @@ export const syncBridge = {
     },
 
     /**
-     * المزامنة الشاملة (النسخة المنقذة v3.0 — Offline-First):
-     * تقوم بإرسال كل بيانات الرفوف والكتب
-     * إذا لم يكن هناك اتصال: تخزّن البيانات في قائمة الانتظار
-     * عند عودة الاتصال: تُرسل تلقائياً في الخلفية (بدون أي تأثير على الواجهة)
+     * المزامنة الشاملة — ترسل كل البيانات مع التفاصيل الكاملة
      */
     syncFull: async (books: any[], shelves: any[], activeStatus: string = 'Idle') => {
-        // ── ALWAYS record activity timestamp (Offline-safe) ──
         syncBridge.recordActivity();
 
         try {
-            const deviceId = await syncBridge.getDeviceId();
-            
-            // حساب دقيق للدقائق الكُلية المخزنة في الكتب
-            const totalSec = books.reduce((acc, b) => acc + (b.timeSpentSeconds || 0), 0);
-            
-            const payload = {
-                deviceId,
-                data: {
-                    activeStatus,
-                    shelves: shelves.map(s => ({ id: s.id, name: s.name, color: s.color })),
-                    books: books.map(b => ({
-                        id: b.id,
-                        title: b.title,
-                        shelfId: b.shelfId || 'default',
-                        author: b.author || '',
-                        stars: b.stars || 0,
-                        timeSpentSeconds: b.timeSpentSeconds || 0,
-                        dailyTimeSeconds: b.dailyTimeSeconds || 0,
-                        lastReadDate: b.lastReadDate || '',
-                        lastReadAt: b.lastReadAt || 0,
-                        addedAt: b.addedAt || 0
-                    })),
-                    readingStats: {
-                        totalMinutes: Math.floor(totalSec / 60)
-                    }
-                }
-            };
+            const payload = await _buildFullPayload(books, shelves, activeStatus);
 
-            // ── OFFLINE-FIRST CHECK: Queue if no network ──
+            // ── OFFLINE-FIRST CHECK ──
             if (!navigator.onLine) {
                 const queue = getSyncQueue();
                 queue.push({ payload, timestamp: Date.now() });
@@ -339,60 +358,38 @@ export const syncBridge = {
                 return;
             }
 
-            // --- محرك الإرسال الذكي (بموقت زمني 15 ثانية — يتحمل cold start لـ Render) ---
             await _wakeUpServer();
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 ثانية لتحمل cold start
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
 
             await fetch(`${API_BASE_URL}/sync`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
-                signal: controller.signal // تفعيل خاصية الإلغاء
+                signal: controller.signal
             });
 
-            clearTimeout(timeoutId); // مسح المؤقت في حال النجاح
-            console.log('✅ Synchronized with Neural Network');
+            clearTimeout(timeoutId);
+            console.log('✅ Full sync completed with all details');
 
-            // ── If we just came online, also flush any queued items ──
             const pendingQueue = getSyncQueue();
             if (pendingQueue.length > 0) {
                 setTimeout(flushSyncQueue, 1000);
             }
 
         } catch (error: any) {
-            // في حالة التعطل أو التأخير، نحفظ البيانات في قائمة الانتظار للإرسال لاحقاً
             if (error.name === 'AbortError') {
-                console.warn('⚠️ Sync timeout (Server slow) — queuing for retry.');
+                console.warn('⚠️ Sync timeout — queuing for retry.');
             } else {
                 console.error('❌ Network error during sync:', error.message);
             }
-            // ===== الإصلاح الحرج: حفظ البيانات الفاشلة في قائمة الانتظار =====
             try {
-                const deviceId = await syncBridge.getDeviceId();
-                const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
-                const retryPayload = {
-                    deviceId,
-                    data: {
-                        activeStatus,
-                        shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
-                        books: books.map((b: any) => ({
-                            id: b.id, title: b.title, shelfId: b.shelfId || 'default',
-                            author: b.author || '', stars: b.stars || 0,
-                            timeSpentSeconds: b.timeSpentSeconds || 0,
-                            dailyTimeSeconds: b.dailyTimeSeconds || 0,
-                            lastReadDate: b.lastReadDate || '',
-                            lastReadAt: b.lastReadAt || 0,
-                            addedAt: b.addedAt || 0
-                        })),
-                        readingStats: { totalMinutes: Math.floor(totalSec / 60) }
-                    }
-                };
+                const retryPayload = await _buildFullPayload(books, shelves, activeStatus);
                 const queue = getSyncQueue();
                 queue.push({ payload: retryPayload, timestamp: Date.now() });
                 saveSyncQueue(queue);
                 console.log('📦 Failed sync queued for automatic retry');
-            } catch { /* لا نوقف التطبيق أبداً بسبب خطأ في القائمة */ }
+            } catch { /* صامت */ }
         }
     },
 
@@ -400,10 +397,7 @@ export const syncBridge = {
      * إرسال "نبضة" سريعة لمعرفة ماذا يقرأ المستخدم الآن
      */
     pushPulse: async (bookTitle: string) => {
-        // Record activity for re-engagement tracking
         syncBridge.recordActivity();
-        
-        // Skip network call if offline (no need to queue pulses)
         if (!navigator.onLine) return;
         
         try {
@@ -419,8 +413,5 @@ export const syncBridge = {
         } catch (e) {}
     },
 
-    /**
-     * Manual flush — can be called from SystemNotificationManager on app resume
-     */
     flushPendingSync: flushSyncQueue
 };
