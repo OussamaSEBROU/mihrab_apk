@@ -1,426 +1,345 @@
-import { Device } from '@capacitor/device';
+import { Book, ShelfData } from '../types';
+import { pdfStorage } from './pdfStorage';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
-// رابط الـ Backend الصحيح كما في موقع Render
-const API_BASE_URL = 'https://mihrab-backend.onrender.com/api';
-
-// ===== STABLE DEVICE ID — يبقى ثابتاً حتى لو فشل Capacitor =====
-const DEVICE_ID_KEY = 'sanctuary_stable_device_id';
-const _getStableFallbackId = (): string => {
-  let id = localStorage.getItem(DEVICE_ID_KEY);
-  if (!id) {
-    id = 'Node_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
-    localStorage.setItem(DEVICE_ID_KEY, id);
-  }
-  return id;
-};
-
-// ===== RENDER WAKE-UP — يوقظ السيرفر قبل الإرسال =====
-let _serverAwake = false;
-const _wakeUpServer = async (): Promise<void> => {
-  if (_serverAwake) return;
-  try {
-    const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 8000);
-    await fetch(`${API_BASE_URL}/test`, { signal: ctrl.signal });
-    clearTimeout(tid);
-    _serverAwake = true;
-    // بعد 5 دقائق، نعتبر أن السيرفر قد ينام مجدداً
-    setTimeout(() => { _serverAwake = false; }, 5 * 60 * 1000);
-  } catch { /* صامت */ }
-};
-
-// ===== OFFLINE-FIRST: SYNC QUEUE ENGINE =====
-// يحتفظ بالعمليات المعلقة عند عدم وجود اتصال ويرسلها تلقائياً عند العودة
-const SYNC_QUEUE_KEY = 'sanctuary_sync_queue';
-const LAST_ACTIVITY_KEY = 'sanctuary_last_activity';
-
-interface QueuedSync {
-  payload: any;
-  timestamp: number;
-}
-
-// ===== INDEXEDDB SYNC QUEUE PERSISTENCE =====
-// Survives cache clears — ensures offline syncs are never lost
-const SYNC_IDB_NAME = 'SanctuarySyncDB';
-const SYNC_IDB_VERSION = 1;
-const SYNC_STORE = 'SyncQueue';
-
-let _syncDb: IDBDatabase | null = null;
-let _syncDbPromise: Promise<IDBDatabase> | null = null;
-
-const _getSyncDb = (): Promise<IDBDatabase> => {
-  if (_syncDb) return Promise.resolve(_syncDb);
-  if (_syncDbPromise) return _syncDbPromise;
-  _syncDbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(SYNC_IDB_NAME, SYNC_IDB_VERSION);
-    req.onupgradeneeded = (e: any) => {
-      const db = e.target.result as IDBDatabase;
-      if (!db.objectStoreNames.contains(SYNC_STORE)) {
-        db.createObjectStore(SYNC_STORE);
-      }
-    };
-    req.onsuccess = () => {
-      _syncDb = req.result;
-      _syncDb!.onclose = () => { _syncDb = null; _syncDbPromise = null; };
-      resolve(_syncDb!);
-    };
-    req.onerror = () => { _syncDbPromise = null; reject(req.error); };
-  });
-  return _syncDbPromise;
-};
-
-const _persistSyncQueueToIDB = async (queue: QueuedSync[]): Promise<void> => {
-  try {
-    const db = await _getSyncDb();
-    return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(SYNC_STORE, 'readwrite');
-      tx.objectStore(SYNC_STORE).put(JSON.stringify(queue), SYNC_QUEUE_KEY);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {}
-};
-
-const _readSyncQueueFromIDB = async (): Promise<QueuedSync[]> => {
-  try {
-    const db = await _getSyncDb();
-    return new Promise<QueuedSync[]>((resolve, reject) => {
-      const tx = db.transaction(SYNC_STORE, 'readonly');
-      const req = tx.objectStore(SYNC_STORE).get(SYNC_QUEUE_KEY);
-      req.onsuccess = () => {
-        if (req.result) {
-          try { resolve(JSON.parse(req.result)); } catch { resolve([]); }
-        } else { resolve([]); }
-      };
-      req.onerror = () => resolve([]);
-    });
-  } catch { return []; }
-};
-
-const getSyncQueue = (): QueuedSync[] => {
-  try {
-    const data = localStorage.getItem(SYNC_QUEUE_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch { return []; }
-};
-
-const saveSyncQueue = (queue: QueuedSync[]) => {
-  // Keep max 20 entries to avoid storage bloat
-  const trimmed = queue.slice(-20);
-  localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(trimmed));
-  // Persist to IndexedDB for cache-clear resilience
-  _persistSyncQueueToIDB(trimmed).catch(() => {});
-};
-
-const clearSyncQueue = () => {
-  localStorage.removeItem(SYNC_QUEUE_KEY);
-  _persistSyncQueueToIDB([]).catch(() => {});
-};
-
-// ===== SILENT NETWORK FLUSH — fires when connectivity is restored =====
-const flushSyncQueue = async () => {
-  // Merge localStorage queue with IDB queue (in case localStorage was cleared)
-  let queue = getSyncQueue();
-  if (queue.length === 0) {
-    const idbQueue = await _readSyncQueueFromIDB();
-    if (idbQueue.length > 0) {
-      queue = idbQueue;
-      console.log(`🔄 Recovered ${idbQueue.length} sync items from IndexedDB`);
-    }
-  }
-  if (queue.length === 0) return;
-  
-  const remainingQueue: QueuedSync[] = [];
-  
-  for (const item of queue) {
-    try {
-      await _wakeUpServer();
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-      
-      await fetch(`${API_BASE_URL}/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item.payload),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-    } catch {
-      // If still failing, keep in queue for next retry
-      remainingQueue.push(item);
-    }
-  }
-  
-  if (remainingQueue.length === 0) {
-    clearSyncQueue();
-    console.log('✅ Offline queue fully flushed');
-  } else {
-    saveSyncQueue(remainingQueue);
-    console.warn(`⚠️ ${remainingQueue.length} sync items still pending`);
-  }
-};
-
-// ===== AUTO-FLUSH LISTENER — silent, zero-UI, no spinners =====
-if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => {
-    console.log('🌐 Connection restored — flushing sync queue silently...');
-    // Delay slightly to let the connection stabilize
-    setTimeout(flushSyncQueue, 2000);
+// ─── Capacitor-native file share helper ──────────────────────────────────────
+// navigator.share({ files }) does NOT open the native share sheet reliably
+// inside a Capacitor WebView on Android. The correct path is:
+//   1. Write the blob to Cache directory via @capacitor/filesystem
+//   2. Call @capacitor/share with the resulting file URI
+//   3. Delete the temp file after a short delay
+const _capacitorShareBlob = async (
+  blob: Blob,
+  filename: string,
+  // title: string,
+  text: string,
+): Promise<void> => {
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
   });
 
-  // App lifecycle: flush when returning to foreground
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && navigator.onLine) {
-      setTimeout(flushSyncQueue, 1500);
-    }
+  const written = await Filesystem.writeFile({
+    path: filename,
+    data: base64,
+    directory: Directory.Cache,
+    recursive: true,
   });
 
-  // ===== IMMEDIATE STARTUP SYNC — يُسجل المستخدم فوراً عند فتح التطبيق =====
+  await Share.share({
+    title,
+    text,
+    url: written.uri,
+    dialogTitle: title,
+  });
+
   setTimeout(async () => {
-    if (!navigator.onLine) return;
-    try {
-      await _wakeUpServer();
-      const { storageService } = await import('./storageService');
-      const books = storageService.getBooks();
-      const shelves = storageService.getShelves();
-      const deviceId = await syncBridge.getDeviceId();
-      const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-      await fetch(`${API_BASE_URL}/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId,
-          data: {
-            activeStatus: 'Online',
-            shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
-            books: books.map((b: any) => ({
-              id: b.id, title: b.title, shelfId: b.shelfId || 'default',
-              author: b.author || '', stars: b.stars || 0,
-              timeSpentSeconds: b.timeSpentSeconds || 0,
-              dailyTimeSeconds: b.dailyTimeSeconds || 0,
-              lastReadDate: b.lastReadDate || '',
-              lastReadAt: b.lastReadAt || 0,
-              addedAt: b.addedAt || 0
-            })),
-            readingStats: { totalMinutes: Math.floor(totalSec / 60) }
-          }
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      console.log('🚀 Startup sync completed — device registered with admin panel');
-    } catch { /* صامت */ }
-  }, 3000); // بعد 3 ثوانٍ من التشغيل
+    try { await Filesystem.deleteFile({ path: filename, directory: Directory.Cache }); }
+    catch { /* ignore */ }
+  }, 30_000);
+};
 
-  // ===== PERIODIC HEARTBEAT — يُبقي المستخدم "نشطاً" في لوحة التحكم =====
-  // لوحة التحكم تعتبر المستخدم نشطاً إذا كان lastSync أقل من 5 دقائق
-  // نبض كل 3 دقائق يضمن ظهور المستخدم دائماً عند استخدام التطبيق
-  setInterval(async () => {
-    if (!navigator.onLine) return;
-    try {
-      const { storageService } = await import('./storageService');
-      const books = storageService.getBooks();
-      const shelves = storageService.getShelves();
-      if (books.length > 0 || shelves.length > 0) {
-        const deviceId = await syncBridge.getDeviceId();
-        const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
-        await _wakeUpServer();
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-        await fetch(`${API_BASE_URL}/sync`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deviceId,
-            data: {
-              activeStatus: 'Online',
-              shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
-              books: books.map((b: any) => ({
-                id: b.id, title: b.title, shelfId: b.shelfId || 'default',
-                author: b.author || '', stars: b.stars || 0,
-                timeSpentSeconds: b.timeSpentSeconds || 0,
-                dailyTimeSeconds: b.dailyTimeSeconds || 0,
-                lastReadDate: b.lastReadDate || '',
-                lastReadAt: b.lastReadAt || 0,
-                addedAt: b.addedAt || 0
-              })),
-              readingStats: { totalMinutes: Math.floor(totalSec / 60) }
-            }
-          }),
-          signal: controller.signal
-        }).catch(() => {});
-        clearTimeout(timeoutId);
-        console.log('💓 Heartbeat sent to admin panel');
+// ─── JSZip Loader: Guaranteed single-load with full error recovery ───────────
+let _jsZipPromise: Promise<any> | null = null;
+
+const _loadJSZip = (): Promise<any> => {
+  if ((window as any).JSZip) return Promise.resolve((window as any).JSZip);
+  if (_jsZipPromise) return _jsZipPromise;
+
+  _jsZipPromise = new Promise<any>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    script.async = true;
+    script.onload = () => {
+      if ((window as any).JSZip) {
+        resolve((window as any).JSZip);
+      } else {
+        _jsZipPromise = null;
+        reject(new Error('[Mihrab] JSZip loaded but not found on window'));
       }
-    } catch { /* صامت — لا نعطل التطبيق أبداً */ }
-  }, 3 * 60 * 1000); // كل 3 دقائق
-}
+    };
+    script.onerror = () => {
+      _jsZipPromise = null;
+      reject(new Error('[Mihrab] Failed to load JSZip engine'));
+    };
+    document.head.appendChild(script);
+  });
 
-export const syncBridge = {
-    // وظيفة جلب بصمة الجهاز بأمان (تعديل Safe-Mode)
-    getDeviceId: async () => {
-        try {
-            // نحاول جلب البصمة الحقيقية من الهاتف
-            const info = await Device.getId();
-            // حفظ البصمة الحقيقية كنسخة احتياطية
-            if (info.identifier) {
-              localStorage.setItem(DEVICE_ID_KEY, info.identifier);
-            }
-            return info.identifier;
-        } catch (e) {
-            // في حالة فشل الاتصال بالمكتبة — نستخدم بصمة ثابتة مُخزّنة
-            return _getStableFallbackId();
+  return _jsZipPromise;
+};
+
+// ─── Pure Import sanitiser: strips personal stats, preserves knowledge ───────
+const _sanitiseBookForExport = (book: Book): Book => ({
+  ...book,
+  stars: 0,
+  timeSpentSeconds: 0,
+  dailyTimeSeconds: 0,
+  sessionTimeSeconds: 0,
+  lastReadAt: undefined,
+  lastReadDate: '',
+  annotations: book.annotations ?? [],
+});
+
+// ─── Community Service ────────────────────────────────────────────────────────
+export const communityService = {
+
+  exportShelf: async (
+    shelf: ShelfData,
+    books: Book[],
+    userName: string
+  ): Promise<{ uri: string; filename: string }> => {
+    const JSZip = await _loadJSZip();
+    const zip = new JSZip();
+
+    zip.file('meta.json', JSON.stringify({
+      version: '2.1.0',
+      exportedBy: userName,
+      exportedAt: new Date().toISOString(),
+      type: 'SHELF_ARCHIVE',
+      bookCount: books.length,
+    }));
+
+    zip.file('shelf.json', JSON.stringify(shelf));
+
+    const booksFolder = zip.folder('books')!;
+    let exportedCount = 0;
+
+    for (const book of books) {
+      const pdfData = await pdfStorage.getFile(book.id);
+
+      if (!pdfData || pdfData.byteLength < 512) {
+        console.warn(`[Mihrab/Export] Skipping "${book.title}" — binary missing or corrupt`);
+        continue;
+      }
+
+      const cleanBook = _sanitiseBookForExport(book);
+      booksFolder.file(`${book.id}.json`, JSON.stringify(cleanBook));
+      booksFolder.file(`${book.id}.pdf`, pdfData);
+      exportedCount++;
+    }
+
+    if (exportedCount === 0) {
+      throw new Error('NO_EXPORTABLE_BOOKS');
+    }
+
+    const content = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const safeShelfName = shelf.name.replace(/[^\w\u0600-\u06FF]/g, '_');
+    const filename = `Mihrab_${safeShelfName}_${Date.now()}.zip`;
+    const uri = URL.createObjectURL(content);
+
+    return { uri, filename };
+  },
+
+  shareBook: async (book: Book, lang: string): Promise<void> => {
+    const JSZip = await _loadJSZip();
+    const zip = new JSZip();
+
+    const pdfData = await pdfStorage.getFile(book.id);
+    if (!pdfData || pdfData.byteLength < 512) {
+      throw new Error(
+        lang === 'ar'
+          ? 'ملف الكتاب غير موجود محلياً أو تالف'
+          : 'Book binary not found locally or is corrupt'
+      );
+    }
+
+    const cleanBook = _sanitiseBookForExport(book);
+
+    zip.file('meta.json', JSON.stringify({
+      version: '2.1.0',
+      type: 'SINGLE_BOOK',
+      exportedAt: new Date().toISOString(),
+    }));
+    zip.file('book.json', JSON.stringify(cleanBook));
+    zip.file('book.pdf', pdfData);
+
+    const content = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 5 },
+    });
+
+    const safeTitle = book.title.replace(/[^\w\u0600-\u06FF]/g, '_');
+    const filename = `${safeTitle}.mbook`;
+    const shareText = lang === 'ar'
+      ? `شارك معي هذا الكتاب من المحراب: ${book.title}`
+      : `Check out this book from Mihrab: ${book.title}`;
+
+    await _capacitorShareBlob(content, filename, book.title, shareText);
+  },
+
+  importFile: async (file: File): Promise<{ shelf: ShelfData; books: Book[] }> => {
+    const JSZip = await _loadJSZip();
+    const zip = await JSZip.loadAsync(file);
+
+    const metaJson = await zip.file('meta.json')?.async('string');
+    const meta = metaJson ? JSON.parse(metaJson) : {};
+
+    if (meta.type === 'SINGLE_BOOK') {
+      throw new Error('BOOK_AS_SHELF');
+    }
+
+    const shelfJson = await zip.file('shelf.json')?.async('string');
+    if (!shelfJson) throw new Error('INVALID_FORMAT');
+
+    const shelf: ShelfData = JSON.parse(shelfJson);
+    const books: Book[] = [];
+
+    const booksFolder = zip.folder('books');
+    if (!booksFolder) throw new Error('INVALID_FORMAT');
+
+    const jsonFiles: { relativePath: string; file: any }[] = [];
+    booksFolder.forEach((relativePath: string, file: any) => {
+      if (relativePath.endsWith('.json')) jsonFiles.push({ relativePath, file });
+    });
+
+    for (const { relativePath, file: jsonFile } of jsonFiles) {
+      try {
+        const bookId = relativePath.replace('.json', '');
+        const bookData: Book = JSON.parse(await jsonFile.async('string'));
+        const pdfData: ArrayBuffer | undefined = await zip
+          .file(`books/${bookId}.pdf`)
+          ?.async('arraybuffer');
+
+        if (!pdfData || pdfData.byteLength < 512) {
+          console.warn(`[Mihrab/Import] Skipping "${bookData.title}" — PDF missing in archive`);
+          continue;
         }
-    },
 
-    // ===== LAST ACTIVITY TRACKER — for 8-hour re-engagement =====
-    recordActivity: () => {
-        localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
-    },
+        await pdfStorage.saveFile(bookId, pdfData);
 
-    getLastActivity: (): number => {
-        const ts = localStorage.getItem(LAST_ACTIVITY_KEY);
-        return ts ? parseInt(ts, 10) : Date.now();
-    },
+        const cleanBook: Book = {
+          ...bookData,
+          stars: 0,
+          timeSpentSeconds: 0,
+          dailyTimeSeconds: 0,
+          sessionTimeSeconds: 0,
+          lastReadAt: undefined,
+          lastReadDate: '',
+          annotations: bookData.annotations ?? [],
+        };
 
-    getInactiveHours: (): number => {
-        const last = syncBridge.getLastActivity();
-        return (Date.now() - last) / (1000 * 60 * 60);
-    },
+        books.push(cleanBook);
+      } catch (err) {
+        console.error('[Mihrab/Import] Failed to process book entry:', relativePath, err);
+      }
+    }
 
-    /**
-     * المزامنة الشاملة (النسخة المنقذة v3.0 — Offline-First):
-     * تقوم بإرسال كل بيانات الرفوف والكتب
-     * إذا لم يكن هناك اتصال: تخزّن البيانات في قائمة الانتظار
-     * عند عودة الاتصال: تُرسل تلقائياً في الخلفية (بدون أي تأثير على الواجهة)
-     */
-    syncFull: async (books: any[], shelves: any[], activeStatus: string = 'Idle') => {
-        // ── ALWAYS record activity timestamp (Offline-safe) ──
-        syncBridge.recordActivity();
+    return { shelf, books };
+  },
 
-        try {
-            const deviceId = await syncBridge.getDeviceId();
-            
-            // حساب دقيق للدقائق الكُلية المخزنة في الكتب
-            const totalSec = books.reduce((acc, b) => acc + (b.timeSpentSeconds || 0), 0);
-            
-            const payload = {
-                deviceId,
-                data: {
-                    activeStatus,
-                    shelves: shelves.map(s => ({ id: s.id, name: s.name, color: s.color })),
-                    books: books.map(b => ({
-                        id: b.id,
-                        title: b.title,
-                        shelfId: b.shelfId || 'default',
-                        author: b.author || '',
-                        stars: b.stars || 0,
-                        timeSpentSeconds: b.timeSpentSeconds || 0,
-                        dailyTimeSeconds: b.dailyTimeSeconds || 0,
-                        lastReadDate: b.lastReadDate || '',
-                        lastReadAt: b.lastReadAt || 0,
-                        addedAt: b.addedAt || 0
-                    })),
-                    readingStats: {
-                        totalMinutes: Math.floor(totalSec / 60)
-                    }
-                }
-            };
+  importBook: async (file: File, targetShelfId: string): Promise<Book> => {
+    const JSZip = await _loadJSZip();
+    const zip = await JSZip.loadAsync(file);
 
-            // ── OFFLINE-FIRST CHECK: Queue if no network ──
-            if (!navigator.onLine) {
-                const queue = getSyncQueue();
-                queue.push({ payload, timestamp: Date.now() });
-                saveSyncQueue(queue);
-                console.log('📴 Offline — sync queued silently');
-                return;
-            }
+    const metaJson = await zip.file('meta.json')?.async('string');
+    const meta = metaJson ? JSON.parse(metaJson) : {};
 
-            // --- محرك الإرسال الذكي (بموقت زمني 15 ثانية — يتحمل cold start لـ Render) ---
-            await _wakeUpServer();
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 ثانية لتحمل cold start
+    if (meta.type === 'SHELF_ARCHIVE') {
+      throw new Error('SHELF_AS_BOOK');
+    }
 
-            await fetch(`${API_BASE_URL}/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: controller.signal // تفعيل خاصية الإلغاء
-            });
+    const bookJson = await zip.file('book.json')?.async('string');
+    const pdfData = await zip.file('book.pdf')?.async('arraybuffer');
 
-            clearTimeout(timeoutId); // مسح المؤقت في حال النجاح
-            console.log('✅ Synchronized with Neural Network');
+    if (!bookJson || !pdfData || pdfData.byteLength < 512) {
+      throw new Error('INVALID_FORMAT');
+    }
 
-            // ── If we just came online, also flush any queued items ──
-            const pendingQueue = getSyncQueue();
-            if (pendingQueue.length > 0) {
-                setTimeout(flushSyncQueue, 1000);
-            }
+    const bookData: Book = JSON.parse(bookJson);
+    const newId = `imp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
-        } catch (error: any) {
-            // في حالة التعطل أو التأخير، نحفظ البيانات في قائمة الانتظار للإرسال لاحقاً
-            if (error.name === 'AbortError') {
-                console.warn('⚠️ Sync timeout (Server slow) — queuing for retry.');
-            } else {
-                console.error('❌ Network error during sync:', error.message);
-            }
-            // ===== الإصلاح الحرج: حفظ البيانات الفاشلة في قائمة الانتظار =====
-            try {
-                const deviceId = await syncBridge.getDeviceId();
-                const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
-                const retryPayload = {
-                    deviceId,
-                    data: {
-                        activeStatus,
-                        shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
-                        books: books.map((b: any) => ({
-                            id: b.id, title: b.title, shelfId: b.shelfId || 'default',
-                            author: b.author || '', stars: b.stars || 0,
-                            timeSpentSeconds: b.timeSpentSeconds || 0,
-                            dailyTimeSeconds: b.dailyTimeSeconds || 0,
-                            lastReadDate: b.lastReadDate || '',
-                            lastReadAt: b.lastReadAt || 0,
-                            addedAt: b.addedAt || 0
-                        })),
-                        readingStats: { totalMinutes: Math.floor(totalSec / 60) }
-                    }
-                };
-                const queue = getSyncQueue();
-                queue.push({ payload: retryPayload, timestamp: Date.now() });
-                saveSyncQueue(queue);
-                console.log('📦 Failed sync queued for automatic retry');
-            } catch { /* لا نوقف التطبيق أبداً بسبب خطأ في القائمة */ }
-        }
-    },
+    await pdfStorage.saveFile(newId, pdfData);
 
-    /**
-     * إرسال "نبضة" سريعة لمعرفة ماذا يقرأ المستخدم الآن
-     */
-    pushPulse: async (bookTitle: string) => {
-        // Record activity for re-engagement tracking
-        syncBridge.recordActivity();
-        
-        // Skip network call if offline (no need to queue pulses)
-        if (!navigator.onLine) return;
-        
-        try {
-            const deviceId = await syncBridge.getDeviceId();
-            await fetch(`${API_BASE_URL}/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    deviceId,
-                    data: { activeStatus: `Reading: ${bookTitle}` }
-                })
-            }).catch(() => {});
-        } catch (e) {}
-    },
+    const importedBook: Book = {
+      ...bookData,
+      id: newId,
+      shelfId: targetShelfId,
+      stars: 0,
+      timeSpentSeconds: 0,
+      dailyTimeSeconds: 0,
+      sessionTimeSeconds: 0,
+      lastReadAt: undefined,
+      lastReadDate: '',
+      annotations: bookData.annotations ?? [],
+    };
 
-    /**
-     * Manual flush — can be called from SystemNotificationManager on app resume
-     */
-    flushPendingSync: flushSyncQueue
+    return importedBook;
+  },
+
+  shareShelf: async (
+    shelf: ShelfData,
+    books: Book[],
+    userName: string,
+    lang: string
+  ): Promise<{ success: boolean; method: 'native' | 'download' | 'clipboard' }> => {
+    const JSZip = await _loadJSZip();
+    const zip = new JSZip();
+
+    const shelfBooks = books.filter(b => b.shelfId === shelf.id);
+
+    zip.file('meta.json', JSON.stringify({
+      version: '2.1.0',
+      exportedBy: userName,
+      exportedAt: new Date().toISOString(),
+      type: 'SHELF_ARCHIVE',
+      bookCount: shelfBooks.length,
+    }));
+
+    zip.file('shelf.json', JSON.stringify(shelf));
+
+    const booksFolder = zip.folder('books')!;
+    let exportedCount = 0;
+
+    for (const book of shelfBooks) {
+      const pdfData = await pdfStorage.getFile(book.id);
+
+      if (!pdfData || pdfData.byteLength < 512) {
+        console.warn(`[Mihrab/ShareShelf] Skipping "${book.title}" — binary missing or corrupt`);
+        continue;
+      }
+
+      const cleanBook = _sanitiseBookForExport(book);
+      booksFolder.file(`${book.id}.json`, JSON.stringify(cleanBook));
+      booksFolder.file(`${book.id}.pdf`, pdfData);
+      exportedCount++;
+    }
+
+    if (exportedCount === 0) {
+      throw new Error('NO_EXPORTABLE_BOOKS');
+    }
+
+    const content = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const safeShelfName = shelf.name.replace(/[^\w\u0600-\u06FF]/g, '_');
+    const filename = `Mihrab_${safeShelfName}_${Date.now()}.zip`;
+    const shareText = lang === 'ar'
+      ? `شارك معي هذا الرف من المحراب: ${shelf.name}`
+      : `Check out this shelf from Mihrab: ${shelf.name}`;
+
+    await _capacitorShareBlob(content, filename, shelf.name, shareText);
+    return { success: true, method: 'native' };
+  },
+
+  downloadFile: async (uri: string, filename: string, _lang: string): Promise<void> => {
+    const link = document.createElement('a');
+    link.href = uri;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(uri), 10_000);
+  },
 };
