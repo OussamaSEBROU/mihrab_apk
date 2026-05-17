@@ -627,6 +627,14 @@ export const storageService = {
 
     if (booksRecovered > 0 || shelvesRecovered > 0) {
       console.log(`🏛️ === نتيجة الاستعادة: ${booksRecovered} كتاب + ${shelvesRecovered} رف ===`);
+      // ===== مزامنة فورية بعد الاستعادة لتسجيل البيانات في لوحة التحكم =====
+      try {
+        syncBridge.syncFull(
+          storageService.getBooks(),
+          storageService.getShelves(),
+          'Recovery Sync'
+        );
+      } catch { /* لا نوقف التطبيق */ }
     } else {
       console.log('✅ جميع البيانات سليمة — لا حاجة للاستعادة');
     }
