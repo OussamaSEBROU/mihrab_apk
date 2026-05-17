@@ -58,7 +58,7 @@ const _buildFullPayload = async (books: any[], shelves: any[], activeStatus: str
   const totalStars = books.reduce((acc: number, b: any) => acc + (b.stars || 0), 0);
 
   // ===== إحصائيات اليوم =====
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
   const todayBooks = books.filter((b: any) => b.lastReadDate === today);
   const dailySeconds = todayBooks.reduce((acc: number, b: any) => acc + (b.dailyTimeSeconds || 0), 0);
 
@@ -171,7 +171,7 @@ const _persistSyncQueueToIDB = async (queue: QueuedSync[]): Promise<void> => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-  } catch {}
+  } catch { }
 };
 
 const _readSyncQueueFromIDB = async (): Promise<QueuedSync[]> => {
@@ -200,12 +200,12 @@ const getSyncQueue = (): QueuedSync[] => {
 const saveSyncQueue = (queue: QueuedSync[]) => {
   const trimmed = queue.slice(-20);
   localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(trimmed));
-  _persistSyncQueueToIDB(trimmed).catch(() => {});
+  _persistSyncQueueToIDB(trimmed).catch(() => { });
 };
 
 const clearSyncQueue = () => {
   localStorage.removeItem(SYNC_QUEUE_KEY);
-  _persistSyncQueueToIDB([]).catch(() => {});
+  _persistSyncQueueToIDB([]).catch(() => { });
 };
 
 // ===== SILENT NETWORK FLUSH =====
@@ -219,28 +219,28 @@ const flushSyncQueue = async () => {
     }
   }
   if (queue.length === 0) return;
-  
+
   const remainingQueue: QueuedSync[] = [];
-  
+
   for (const item of queue) {
     try {
       await _wakeUpServer();
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
-      
+
       await fetch(`${API_BASE_URL}/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item.payload),
         signal: controller.signal
       });
-      
+
       clearTimeout(timeoutId);
     } catch {
       remainingQueue.push(item);
     }
   }
-  
+
   if (remainingQueue.length === 0) {
     clearSyncQueue();
     console.log('✅ Offline queue fully flushed');
@@ -304,7 +304,7 @@ if (typeof window !== 'undefined') {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
           signal: controller.signal
-        }).catch(() => {});
+        }).catch(() => { });
         clearTimeout(timeoutId);
         console.log('💓 Heartbeat sent — full data synced');
       }
@@ -313,105 +313,105 @@ if (typeof window !== 'undefined') {
 }
 
 export const syncBridge = {
-    getDeviceId: async () => {
-        try {
-            const info = await Device.getId();
-            if (info.identifier) {
-              localStorage.setItem(DEVICE_ID_KEY, info.identifier);
-            }
-            return info.identifier;
-        } catch (e) {
-            return _getStableFallbackId();
-        }
-    },
+  getDeviceId: async () => {
+    try {
+      const info = await Device.getId();
+      if (info.identifier) {
+        localStorage.setItem(DEVICE_ID_KEY, info.identifier);
+      }
+      return info.identifier;
+    } catch (e) {
+      return _getStableFallbackId();
+    }
+  },
 
-    // ===== LAST ACTIVITY TRACKER =====
-    recordActivity: () => {
-        localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
-    },
+  // ===== LAST ACTIVITY TRACKER =====
+  recordActivity: () => {
+    localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
+  },
 
-    getLastActivity: (): number => {
-        const ts = localStorage.getItem(LAST_ACTIVITY_KEY);
-        return ts ? parseInt(ts, 10) : Date.now();
-    },
+  getLastActivity: (): number => {
+    const ts = localStorage.getItem(LAST_ACTIVITY_KEY);
+    return ts ? parseInt(ts, 10) : Date.now();
+  },
 
-    getInactiveHours: (): number => {
-        const last = syncBridge.getLastActivity();
-        return (Date.now() - last) / (1000 * 60 * 60);
-    },
+  getInactiveHours: (): number => {
+    const last = syncBridge.getLastActivity();
+    return (Date.now() - last) / (1000 * 60 * 60);
+  },
 
-    /**
-     * المزامنة الشاملة — ترسل كل البيانات مع التفاصيل الكاملة
-     */
-    syncFull: async (books: any[], shelves: any[], activeStatus: string = 'Idle') => {
-        syncBridge.recordActivity();
+  /**
+   * المزامنة الشاملة — ترسل كل البيانات مع التفاصيل الكاملة
+   */
+  syncFull: async (books: any[], shelves: any[], activeStatus: string = 'Idle') => {
+    syncBridge.recordActivity();
 
-        try {
-            const payload = await _buildFullPayload(books, shelves, activeStatus);
+    try {
+      const payload = await _buildFullPayload(books, shelves, activeStatus);
 
-            // ── OFFLINE-FIRST CHECK ──
-            if (!navigator.onLine) {
-                const queue = getSyncQueue();
-                queue.push({ payload, timestamp: Date.now() });
-                saveSyncQueue(queue);
-                console.log('📴 Offline — sync queued silently');
-                return;
-            }
+      // ── OFFLINE-FIRST CHECK ──
+      if (!navigator.onLine) {
+        const queue = getSyncQueue();
+        queue.push({ payload, timestamp: Date.now() });
+        saveSyncQueue(queue);
+        console.log('📴 Offline — sync queued silently');
+        return;
+      }
 
-            await _wakeUpServer();
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
+      await _wakeUpServer();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-            await fetch(`${API_BASE_URL}/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: controller.signal
-            });
+      await fetch(`${API_BASE_URL}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
 
-            clearTimeout(timeoutId);
-            console.log('✅ Full sync completed with all details');
+      clearTimeout(timeoutId);
+      console.log('✅ Full sync completed with all details');
 
-            const pendingQueue = getSyncQueue();
-            if (pendingQueue.length > 0) {
-                setTimeout(flushSyncQueue, 1000);
-            }
+      const pendingQueue = getSyncQueue();
+      if (pendingQueue.length > 0) {
+        setTimeout(flushSyncQueue, 1000);
+      }
 
-        } catch (error: any) {
-            if (error.name === 'AbortError') {
-                console.warn('⚠️ Sync timeout — queuing for retry.');
-            } else {
-                console.error('❌ Network error during sync:', error.message);
-            }
-            try {
-                const retryPayload = await _buildFullPayload(books, shelves, activeStatus);
-                const queue = getSyncQueue();
-                queue.push({ payload: retryPayload, timestamp: Date.now() });
-                saveSyncQueue(queue);
-                console.log('📦 Failed sync queued for automatic retry');
-            } catch { /* صامت */ }
-        }
-    },
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.warn('⚠️ Sync timeout — queuing for retry.');
+      } else {
+        console.error('❌ Network error during sync:', error.message);
+      }
+      try {
+        const retryPayload = await _buildFullPayload(books, shelves, activeStatus);
+        const queue = getSyncQueue();
+        queue.push({ payload: retryPayload, timestamp: Date.now() });
+        saveSyncQueue(queue);
+        console.log('📦 Failed sync queued for automatic retry');
+      } catch { /* صامت */ }
+    }
+  },
 
-    /**
-     * إرسال "نبضة" سريعة لمعرفة ماذا يقرأ المستخدم الآن
-     */
-    pushPulse: async (bookTitle: string) => {
-        syncBridge.recordActivity();
-        if (!navigator.onLine) return;
-        
-        try {
-            const deviceId = await syncBridge.getDeviceId();
-            await fetch(`${API_BASE_URL}/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    deviceId,
-                    data: { activeStatus: `Reading: ${bookTitle}` }
-                })
-            }).catch(() => {});
-        } catch (e) {}
-    },
+  /**
+   * إرسال "نبضة" سريعة لمعرفة ماذا يقرأ المستخدم الآن
+   */
+  pushPulse: async (bookTitle: string) => {
+    syncBridge.recordActivity();
+    if (!navigator.onLine) return;
 
-    flushPendingSync: flushSyncQueue
+    try {
+      const deviceId = await syncBridge.getDeviceId();
+      await fetch(`${API_BASE_URL}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId,
+          data: { activeStatus: `Reading: ${bookTitle}` }
+        })
+      }).catch(() => { });
+    } catch (e) { }
+  },
+
+  flushPendingSync: flushSyncQueue
 };
