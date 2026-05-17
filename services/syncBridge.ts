@@ -58,7 +58,7 @@ const _buildFullPayload = async (books: any[], shelves: any[], activeStatus: str
   const totalStars = books.reduce((acc: number, b: any) => acc + (b.stars || 0), 0);
 
   // ===== إحصائيات اليوم =====
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const today = new Date().toISOString().split('T')[0];
   const todayBooks = books.filter((b: any) => b.lastReadDate === today);
   const dailySeconds = todayBooks.reduce((acc: number, b: any) => acc + (b.dailyTimeSeconds || 0), 0);
 
