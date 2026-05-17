@@ -87,6 +87,15 @@ export const SystemNotificationManager: React.FC<Props> = ({ lang, notifLang, bo
       // 2. Record activity (user is back)
       syncBridge.recordActivity();
 
+      // 2.5. CRITICAL: Full sync on resume — يُرسل كل البيانات فوراً للوحة التحكم
+      try {
+        const latestBooks = storageService.getBooks();
+        const latestShelves = storageService.getShelves();
+        if (latestBooks.length > 0 || latestShelves.length > 0) {
+          syncBridge.syncFull(latestBooks, latestShelves, 'Online');
+        }
+      } catch { /* صامت */ }
+
       // 3. Check inactivity and schedule re-engagement if needed
       const inactiveHours = syncBridge.getInactiveHours();
       if (inactiveHours >= 8) {
