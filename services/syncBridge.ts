@@ -1,7 +1,33 @@
 import { Device } from '@capacitor/device';
 
 // رابط الـ Backend الصحيح كما في موقع Render
-const API_BASE_URL = 'https://mihrab-backend.onrender.com/api'; 
+const API_BASE_URL = 'https://mihrab-backend.onrender.com/api';
+
+// ===== STABLE DEVICE ID — يبقى ثابتاً حتى لو فشل Capacitor =====
+const DEVICE_ID_KEY = 'sanctuary_stable_device_id';
+const _getStableFallbackId = (): string => {
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = 'Node_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
+};
+
+// ===== RENDER WAKE-UP — يوقظ السيرفر قبل الإرسال =====
+let _serverAwake = false;
+const _wakeUpServer = async (): Promise<void> => {
+  if (_serverAwake) return;
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 8000);
+    await fetch(`${API_BASE_URL}/test`, { signal: ctrl.signal });
+    clearTimeout(tid);
+    _serverAwake = true;
+    // بعد 5 دقائق، نعتبر أن السيرفر قد ينام مجدداً
+    setTimeout(() => { _serverAwake = false; }, 5 * 60 * 1000);
+  } catch { /* صامت */ }
+};
 
 // ===== OFFLINE-FIRST: SYNC QUEUE ENGINE =====
 // يحتفظ بالعمليات المعلقة عند عدم وجود اتصال ويرسلها تلقائياً عند العودة
@@ -108,8 +134,9 @@ const flushSyncQueue = async () => {
   
   for (const item of queue) {
     try {
+      await _wakeUpServer();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
       
       await fetch(`${API_BASE_URL}/sync`, {
         method: 'POST',
@@ -149,21 +176,60 @@ if (typeof window !== 'undefined') {
     }
   });
 
+  // ===== IMMEDIATE STARTUP SYNC — يُسجل المستخدم فوراً عند فتح التطبيق =====
+  setTimeout(async () => {
+    if (!navigator.onLine) return;
+    try {
+      await _wakeUpServer();
+      const { storageService } = await import('./storageService');
+      const books = storageService.getBooks();
+      const shelves = storageService.getShelves();
+      const deviceId = await syncBridge.getDeviceId();
+      const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      await fetch(`${API_BASE_URL}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId,
+          data: {
+            activeStatus: 'Online',
+            shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
+            books: books.map((b: any) => ({
+              id: b.id, title: b.title, shelfId: b.shelfId || 'default',
+              author: b.author || '', stars: b.stars || 0,
+              timeSpentSeconds: b.timeSpentSeconds || 0,
+              dailyTimeSeconds: b.dailyTimeSeconds || 0,
+              lastReadDate: b.lastReadDate || '',
+              lastReadAt: b.lastReadAt || 0,
+              addedAt: b.addedAt || 0
+            })),
+            readingStats: { totalMinutes: Math.floor(totalSec / 60) }
+          }
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      console.log('🚀 Startup sync completed — device registered with admin panel');
+    } catch { /* صامت */ }
+  }, 3000); // بعد 3 ثوانٍ من التشغيل
+
   // ===== PERIODIC HEARTBEAT — يُبقي المستخدم "نشطاً" في لوحة التحكم =====
-  // لوحة التحكم تعتبر المستخدم نشطاً إذا كان lastSync أقل من 10 دقائق
-  // هذا النبض يضمن ظهور المستخدم دائماً عند استخدام التطبيق
+  // لوحة التحكم تعتبر المستخدم نشطاً إذا كان lastSync أقل من 5 دقائق
+  // نبض كل 3 دقائق يضمن ظهور المستخدم دائماً عند استخدام التطبيق
   setInterval(async () => {
     if (!navigator.onLine) return;
     try {
-      // استيراد ديناميكي لتجنب التبعية الدائرية
       const { storageService } = await import('./storageService');
       const books = storageService.getBooks();
       const shelves = storageService.getShelves();
       if (books.length > 0 || shelves.length > 0) {
         const deviceId = await syncBridge.getDeviceId();
         const totalSec = books.reduce((acc: number, b: any) => acc + (b.timeSpentSeconds || 0), 0);
+        await _wakeUpServer();
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         await fetch(`${API_BASE_URL}/sync`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -190,7 +256,7 @@ if (typeof window !== 'undefined') {
         console.log('💓 Heartbeat sent to admin panel');
       }
     } catch { /* صامت — لا نعطل التطبيق أبداً */ }
-  }, 10 * 60 * 1000); // كل 10 دقائق
+  }, 3 * 60 * 1000); // كل 3 دقائق
 }
 
 export const syncBridge = {
@@ -199,11 +265,14 @@ export const syncBridge = {
         try {
             // نحاول جلب البصمة الحقيقية من الهاتف
             const info = await Device.getId();
+            // حفظ البصمة الحقيقية كنسخة احتياطية
+            if (info.identifier) {
+              localStorage.setItem(DEVICE_ID_KEY, info.identifier);
+            }
             return info.identifier;
         } catch (e) {
-            // في حالة فشل الاتصال بالمكتبة (لتجنب الشاشة السوداء)
-            // نقوم بصنع بصمة مؤقتة تعتمد على الوقت
-            return 'Safe_Node_' + Date.now();
+            // في حالة فشل الاتصال بالمكتبة — نستخدم بصمة ثابتة مُخزّنة
+            return _getStableFallbackId();
         }
     },
 
@@ -270,9 +339,10 @@ export const syncBridge = {
                 return;
             }
 
-            // --- محرك الإرسال الذكي (بموقت زمني 5 ثوانٍ فقط) ---
+            // --- محرك الإرسال الذكي (بموقت زمني 15 ثانية — يتحمل cold start لـ Render) ---
+            await _wakeUpServer();
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000); // لا ننتظر أكثر من 5 ثوانٍ
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 ثانية لتحمل cold start
 
             await fetch(`${API_BASE_URL}/sync`, {
                 method: 'POST',
