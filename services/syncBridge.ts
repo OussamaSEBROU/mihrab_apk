@@ -1,12 +1,13 @@
 import { Device } from '@capacitor/device';
 import { App as CapApp } from '@capacitor/app';
 
-// رابط الـ Backend الصحيح كما في موقع Render
-const API_BASE_URL = 'https://mihrab-backend.onrender.com/api';
+// رابط الـ Backend الجديد والمطور على موقع Render
+const API_BASE_URL = 'https://mihrabadminv2.onrender.com/api';
 
 // ===== STABLE DEVICE ID — يبقى ثابتاً حتى لو فشل Capacitor =====
 const DEVICE_ID_KEY = 'sanctuary_stable_device_id';
 const FIRST_VERSION_KEY = 'sanctuary_first_app_version';
+const INSTALL_DATE_KEY = 'sanctuary_install_date';
 
 const _getStableFallbackId = (): string => {
   let id = localStorage.getItem(DEVICE_ID_KEY);
@@ -58,7 +59,7 @@ const _buildFullPayload = async (books: any[], shelves: any[], activeStatus: str
   const totalStars = books.reduce((acc: number, b: any) => acc + (b.stars || 0), 0);
 
   // ===== إحصائيات اليوم =====
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
   const todayBooks = books.filter((b: any) => b.lastReadDate === today);
   const dailySeconds = todayBooks.reduce((acc: number, b: any) => acc + (b.dailyTimeSeconds || 0), 0);
 
@@ -87,12 +88,20 @@ const _buildFullPayload = async (books: any[], shelves: any[], activeStatus: str
     };
   });
 
+  // ===== تاريخ التثبيت الأول — يُحفظ مرة واحدة ولا يتغير أبداً =====
+  let installDate = localStorage.getItem(INSTALL_DATE_KEY);
+  if (!installDate) {
+    installDate = new Date().toISOString();
+    localStorage.setItem(INSTALL_DATE_KEY, installDate);
+  }
+
   return {
     deviceId,
     data: {
       activeStatus,
       appVersion,
       hasUpdated,
+      installDate,
       totalDownloads: books.length,
       shelves: shelves.map((s: any) => ({ id: s.id, name: s.name, color: s.color })),
       books: books.map((b: any) => ({
