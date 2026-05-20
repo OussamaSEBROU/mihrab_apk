@@ -1,7 +1,6 @@
 import { CapacitorConfig } from '@capacitor/cli';
-
 const config: CapacitorConfig = {
-  appId: 'com.sanctuary.mihrab.app',        // ← هذا السطر فقط تغيّر
+  appId: 'com.sanctuary.mihrab.app',
   appName: 'Sanctuary',
   webDir: 'dist',
   server: {
@@ -25,5 +24,4 @@ const config: CapacitorConfig = {
     }
   }
 };
-
 export default config;
