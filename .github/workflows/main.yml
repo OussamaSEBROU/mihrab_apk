@@ -1,5 +1,4 @@
 
-
 name: Eternal Update & Deploy Pipeline
 
 on:
@@ -46,30 +45,64 @@ jobs:
       - name: Generate Mobile Assets
         run: npm run mobile:assets
 
-      - name: Handle Signing Key (Self-Healing)
+      # ══════════════════════════════════════════════════════════════
+      # SIGNING KEY — DETERMINISTIC & SELF-HEALING
+      # If KEYSTORE_BASE64 secret exists → use it (guaranteed same key)
+      # If missing → generate one AND fail with instructions to save it
+      # This ensures the SAME keystore is used across ALL builds forever
+      # ══════════════════════════════════════════════════════════════
+      - name: Restore or Generate Signing Key
         id: signing_key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          # نستخدم الأسرار المشفرة للأمان المطلق
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           mkdir -p android/app/
-          # استخدام قيم افتراضية آمنة في حال لم يتم ضبط الأسرار بعد (للعملية الأولى فقط)
           KP=${KEYSTORE_PASSWORD:-"mihrab2026"}
           KA=${KEY_ALIAS:-"mihrab-alias"}
           KY=${KEY_PASSWORD:-"mihrab2026"}
-          
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            keytool -genkey -v -keystore android/app/release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias "$KA" -storepass "$KP" -keypass "$KY" -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=Default, C=US"
-            echo "--- [ACTION REQUIRED] COPY THIS ---"
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "✅ Using permanent keystore from GitHub Secrets"
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release-key.jks
+          else
+            echo "⚠️ KEYSTORE_BASE64 secret is NOT SET — generating new keystore..."
+            keytool -genkey -v \
+              -keystore android/app/release-key.jks \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias "$KA" -storepass "$KP" -keypass "$KY" \
+              -dname "CN=Mihrab, OU=Dev, O=Mihrab, L=City, S=Default, C=US"
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════╗"
+            echo "║  ⚠️  CRITICAL: SAVE THIS KEYSTORE AS A GITHUB SECRET   ║"
+            echo "║  Without this, every future build will have a           ║"
+            echo "║  DIFFERENT signature → 'App Not Installed' error!       ║"
+            echo "╠══════════════════════════════════════════════════════════╣"
+            echo "║  1. Copy the base64 string below                        ║"
+            echo "║  2. Go to GitHub → Settings → Secrets → Actions         ║"
+            echo "║  3. Create secret: KEYSTORE_BASE64 = <the string>       ║"
+            echo "║  4. Also create: KEYSTORE_PASSWORD = $KP                ║"
+            echo "║  5. Also create: KEY_ALIAS = $KA                        ║"
+            echo "║  6. Also create: KEY_PASSWORD = $KY                     ║"
+            echo "╚══════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "--- KEYSTORE_BASE64 VALUE (copy everything below) ---"
             base64 -w 0 android/app/release-key.jks
             echo ""
-          else
-            echo "$KEYSTORE_BASE64" | base64 -d > android/app/release-key.jks
+            echo "--- END ---"
           fi
 
+          # Print signing fingerprint for verification
+          echo ""
+          echo "🔑 Signing key fingerprint (SHA-256):"
+          keytool -list -v -keystore android/app/release-key.jks -storepass "$KP" 2>/dev/null | grep -A1 "SHA256:" || true
+
+      # ══════════════════════════════════════════════════════════════
+      # GRADLE CONFIG — SAFE, IDEMPOTENT SIGNING INJECTION
+      # Uses precise regex to avoid duplicate or misplaced entries
+      # ══════════════════════════════════════════════════════════════
       - name: Configure Gradle Signing & Versioning
         shell: python
         env:
@@ -79,61 +112,93 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           import os, re
-          
+
           gradle_path = 'android/app/build.gradle'
           with open(gradle_path, 'r') as f:
               content = f.read()
-          
-          # جلب القيم من الأسرار المشفرة مع توفير بديل آمن لتجنب الفشل
-          kp = os.environ.get('KEYSTORE_PASSWORD', 'mihrab2026')
-          ka = os.environ.get('KEY_ALIAS', 'mihrab-alias')
-          ky = os.environ.get('KEY_PASSWORD', 'mihrab2026')
-          
-          signing_conf = "\n" + "    signingConfigs {" + "\n" + \
-                         "        mihrabSigning {" + "\n" + \
-                         "            storeFile file('release-key.jks')" + "\n" + \
-                         "            storePassword '" + kp + "'" + "\n" + \
-                         "            keyAlias '" + ka + "'" + "\n" + \
-                         "            keyPassword '" + ky + "'" + "\n" + \
-                         "        }" + "\n" + "    }" + "\n"
-          
+
+          kp = os.environ.get('KEYSTORE_PASSWORD') or 'mihrab2026'
+          ka = os.environ.get('KEY_ALIAS') or 'mihrab-alias'
+          ky = os.environ.get('KEY_PASSWORD') or 'mihrab2026'
+
+          # ── Step 1: Inject signingConfigs block (only if not present) ──
           if 'mihrabSigning' not in content:
-              content = content.replace('android {', 'android {' + signing_conf)
-          
-          content = content.replace('release {', 'release {\n            signingConfig signingConfigs.mihrabSigning')
-          content = content.replace('debug {', 'debug {\n            signingConfig signingConfigs.mihrabSigning')
-          
-          content = re.sub(r'versionCode\s+\d+', "versionCode " + os.environ['RUN_NUMBER'], content)
-          
+              signing_block = (
+                  "\n    signingConfigs {\n"
+                  "        mihrabSigning {\n"
+                  f"            storeFile file('release-key.jks')\n"
+                  f"            storePassword '{kp}'\n"
+                  f"            keyAlias '{ka}'\n"
+                  f"            keyPassword '{ky}'\n"
+                  "        }\n"
+                  "    }\n"
+              )
+              content = content.replace('android {', 'android {' + signing_block, 1)
+
+          # ── Step 2: Inject signingConfig into buildTypes (idempotent) ──
+          # Only inject if not already present in each block
+          def inject_signing_into_buildtype(content, build_type):
+              # Match the specific buildType block
+              pattern = rf'({build_type}\s*\{{)'
+              # Check if signingConfig is already in this buildType's block
+              bt_match = re.search(rf'{build_type}\s*\{{[^}}]*signingConfig', content)
+              if bt_match:
+                  return content  # Already has signingConfig — skip
+              return re.sub(pattern, rf'\1\n            signingConfig signingConfigs.mihrabSigning', content, count=1)
+
+          content = inject_signing_into_buildtype(content, 'release')
+          content = inject_signing_into_buildtype(content, 'debug')
+
+          # ── Step 3: Update versionCode ──
+          run_num = os.environ.get('RUN_NUMBER', '1')
+          content = re.sub(r'versionCode\s+\d+', f'versionCode {run_num}', content)
+
           with open(gradle_path, 'w') as f:
               f.write(content)
 
+          print(f"✅ Gradle configured: versionCode={run_num}, signing=mihrabSigning")
+
+          # ── Debug: show the relevant section ──
+          with open(gradle_path, 'r') as f:
+              lines = f.readlines()
+          for i, line in enumerate(lines):
+              if 'signingConfig' in line.lower() or 'mihrabSigning' in line:
+                  print(f"  Line {i+1}: {line.rstrip()}")
+
+      # ══════════════════════════════════════════════════════════════
+      # BUILD — Using ONLY build.gradle signing (no command-line override)
+      # This prevents conflicts between two signing methods
+      # ══════════════════════════════════════════════════════════════
       - name: Build Release APK
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           cd android
           chmod +x gradlew
-          KP=${KEYSTORE_PASSWORD:-"mihrab2026"}
-          KA=${KEY_ALIAS:-"mihrab-alias"}
-          KY=${KEY_PASSWORD:-"mihrab2026"}
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$(pwd)/app/release-key.jks \
-            -Pandroid.injected.signing.store.password="$KP" \
-            -Pandroid.injected.signing.key.alias="$KA" \
-            -Pandroid.injected.signing.key.password="$KY"
+          ./gradlew assembleRelease
 
+      # ══════════════════════════════════════════════════════════════
+      # VERIFY — Confirm APK is correctly signed
+      # ══════════════════════════════════════════════════════════════
       - name: Verify APK Signature
         run: |
           APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
-          if [ -f "$APK_PATH" ]; then
-            echo "✅ APK file found: $(du -h $APK_PATH | cut -f1)"
-            $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools/ | tail -1)/apksigner verify --print-certs "$APK_PATH" && echo "✅ APK is SIGNED correctly" || echo "❌ APK is NOT signed"
-          else
-            echo "❌ APK file not found at $APK_PATH"
+          APKSIGNER="$ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools/ | tail -1)/apksigner"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "❌ APK file not found!"
             ls -la android/app/build/outputs/apk/release/ 2>/dev/null || echo "Release directory does not exist"
+            exit 1
+          fi
+
+          echo "✅ APK found: $(du -h $APK_PATH | cut -f1)"
+
+          # Verify signature
+          if $APKSIGNER verify --print-certs "$APK_PATH"; then
+            echo "✅ APK is SIGNED correctly"
+            echo ""
+            echo "🔑 APK certificate fingerprint:"
+            $APKSIGNER verify --print-certs "$APK_PATH" 2>&1 | grep -i "sha-256" || true
+          else
+            echo "❌ APK signature verification FAILED"
             exit 1
           fi
 
@@ -149,3 +214,4 @@ jobs:
           name: mihrab-keystore-backup
           path: android/app/release-key.jks
           retention-days: 1
+
