@@ -19,17 +19,56 @@ const _getStableFallbackId = (): string => {
 };
 
 // ===== RENDER WAKE-UP — يوقظ السيرفر قبل الإرسال =====
+// Render free tier cold starts take 30-60 seconds — timeout must be generous
 let _serverAwake = false;
 const _wakeUpServer = async (): Promise<void> => {
   if (_serverAwake) return;
   try {
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 8000);
-    await fetch(`${API_BASE_URL}/test`, { signal: ctrl.signal });
+    const tid = setTimeout(() => ctrl.abort(), 50000); // 50s for Render cold start
+    const resp = await fetch(`${API_BASE_URL}/test`, { signal: ctrl.signal });
     clearTimeout(tid);
-    _serverAwake = true;
-    setTimeout(() => { _serverAwake = false; }, 5 * 60 * 1000);
-  } catch { /* صامت */ }
+    if (resp.ok) {
+      _serverAwake = true;
+      setTimeout(() => { _serverAwake = false; }, 5 * 60 * 1000);
+      console.log('✅ Server is awake and responding');
+    }
+  } catch (e) {
+    console.warn('⚠️ Server wake-up failed — will retry on sync');
+  }
+};
+
+// ===== SYNC WITH RETRY — يعيد المحاولة عند الفشل =====
+const _syncWithRetry = async (payload: any, maxAttempts: number = 3): Promise<boolean> => {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await _wakeUpServer();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      const resp = await fetch(`${API_BASE_URL}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.success) {
+          console.log(`✅ Sync succeeded on attempt ${attempt}`);
+          return true;
+        }
+      }
+    } catch (e: any) {
+      console.warn(`⚠️ Sync attempt ${attempt}/${maxAttempts} failed: ${e.message || 'timeout'}`);
+    }
+    if (attempt < maxAttempts) {
+      const delay = attempt * 5000; // 5s, 10s backoff
+      console.log(`⏳ Retrying in ${delay / 1000}s...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  return false;
 };
 
 // ===== APP VERSION HELPER =====
@@ -232,20 +271,8 @@ const flushSyncQueue = async () => {
   const remainingQueue: QueuedSync[] = [];
 
   for (const item of queue) {
-    try {
-      await _wakeUpServer();
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-      await fetch(`${API_BASE_URL}/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item.payload),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-    } catch {
+    const success = await _syncWithRetry(item.payload, 2);
+    if (!success) {
       remainingQueue.push(item);
     }
   }
@@ -273,30 +300,30 @@ if (typeof window !== 'undefined') {
   });
 
   // ===== IMMEDIATE STARTUP SYNC — مزامنة فورية عند فتح التطبيق =====
+  // Uses retry mechanism to handle Render cold starts reliably
   setTimeout(async () => {
     if (!navigator.onLine) return;
     try {
-      await _wakeUpServer();
       const { storageService } = await import('./storageService');
       const payload = await _buildFullPayload(
         storageService.getBooks(),
         storageService.getShelves(),
         'Online'
       );
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-      await fetch(`${API_BASE_URL}/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      console.log('🚀 Startup sync completed — device registered');
-    } catch { /* صامت */ }
+      const success = await _syncWithRetry(payload, 3);
+      if (success) {
+        console.log('🚀 Startup sync completed — device registered');
+      } else {
+        // Queue for later if all retries failed
+        const queue = getSyncQueue();
+        queue.push({ payload, timestamp: Date.now() });
+        saveSyncQueue(queue);
+        console.warn('📦 Startup sync failed — queued for retry');
+      }
+    } catch (e) { console.warn('⚠️ Startup sync error:', e); }
   }, 3000);
 
-  // ===== PERIODIC HEARTBEAT — مزامنة كل دقيقة واحدة بالضبط =====
+  // ===== PERIODIC HEARTBEAT — مزامنة كل دقيقتين =====
   setInterval(async () => {
     if (!navigator.onLine) return;
     try {
@@ -304,21 +331,14 @@ if (typeof window !== 'undefined') {
       const books = storageService.getBooks();
       const shelves = storageService.getShelves();
       if (books.length > 0 || shelves.length > 0) {
-        await _wakeUpServer();
         const payload = await _buildFullPayload(books, shelves, 'Online');
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-        await fetch(`${API_BASE_URL}/sync`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        }).catch(() => { });
-        clearTimeout(timeoutId);
-        console.log('💓 Heartbeat sent — full data synced');
+        const success = await _syncWithRetry(payload, 2);
+        if (success) {
+          console.log('💓 Heartbeat sent — full data synced');
+        }
       }
     } catch { /* صامت */ }
-  }, 60 * 1000); // ===== كل دقيقة واحدة بالضبط =====
+  }, 2 * 60 * 1000); // ===== كل دقيقتين =====
 }
 
 export const syncBridge = {
@@ -367,31 +387,25 @@ export const syncBridge = {
         return;
       }
 
-      await _wakeUpServer();
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const success = await _syncWithRetry(payload, 2);
 
-      await fetch(`${API_BASE_URL}/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-      console.log('✅ Full sync completed with all details');
-
-      const pendingQueue = getSyncQueue();
-      if (pendingQueue.length > 0) {
-        setTimeout(flushSyncQueue, 1000);
+      if (success) {
+        console.log('✅ Full sync completed with all details');
+        // Flush any pending offline queue
+        const pendingQueue = getSyncQueue();
+        if (pendingQueue.length > 0) {
+          setTimeout(flushSyncQueue, 1000);
+        }
+      } else {
+        // Queue for retry
+        const queue = getSyncQueue();
+        queue.push({ payload, timestamp: Date.now() });
+        saveSyncQueue(queue);
+        console.log('📦 Sync failed after retries — queued for later');
       }
 
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.warn('⚠️ Sync timeout — queuing for retry.');
-      } else {
-        console.error('❌ Network error during sync:', error.message);
-      }
+      console.error('❌ Sync error:', error.message);
       try {
         const retryPayload = await _buildFullPayload(books, shelves, activeStatus);
         const queue = getSyncQueue();
