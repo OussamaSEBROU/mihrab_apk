@@ -1,5 +1,6 @@
 import { Device } from '@capacitor/device';
 import { App as CapApp } from '@capacitor/app';
+import { getDB } from './pdfStorage';
 
 // رابط الـ Backend الجديد والمطور على موقع Render
 const API_BASE_URL = 'https://mihrabadminv2.onrender.com/api';
@@ -181,38 +182,12 @@ interface QueuedSync {
   timestamp: number;
 }
 
-// ===== INDEXEDDB SYNC QUEUE PERSISTENCE =====
-const SYNC_IDB_NAME = 'SanctuarySyncDB';
-const SYNC_IDB_VERSION = 1;
+// ===== UNIFIED INDEXEDDB SYNC QUEUE PERSISTENCE =====
 const SYNC_STORE = 'SyncQueue';
-
-let _syncDb: IDBDatabase | null = null;
-let _syncDbPromise: Promise<IDBDatabase> | null = null;
-
-const _getSyncDb = (): Promise<IDBDatabase> => {
-  if (_syncDb) return Promise.resolve(_syncDb);
-  if (_syncDbPromise) return _syncDbPromise;
-  _syncDbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(SYNC_IDB_NAME, SYNC_IDB_VERSION);
-    req.onupgradeneeded = (e: any) => {
-      const db = e.target.result as IDBDatabase;
-      if (!db.objectStoreNames.contains(SYNC_STORE)) {
-        db.createObjectStore(SYNC_STORE);
-      }
-    };
-    req.onsuccess = () => {
-      _syncDb = req.result;
-      _syncDb!.onclose = () => { _syncDb = null; _syncDbPromise = null; };
-      resolve(_syncDb!);
-    };
-    req.onerror = () => { _syncDbPromise = null; reject(req.error); };
-  });
-  return _syncDbPromise;
-};
 
 const _persistSyncQueueToIDB = async (queue: QueuedSync[]): Promise<void> => {
   try {
-    const db = await _getSyncDb();
+    const db = await getDB();
     return new Promise<void>((resolve, reject) => {
       const tx = db.transaction(SYNC_STORE, 'readwrite');
       tx.objectStore(SYNC_STORE).put(JSON.stringify(queue), SYNC_QUEUE_KEY);
@@ -224,7 +199,7 @@ const _persistSyncQueueToIDB = async (queue: QueuedSync[]): Promise<void> => {
 
 const _readSyncQueueFromIDB = async (): Promise<QueuedSync[]> => {
   try {
-    const db = await _getSyncDb();
+    const db = await getDB();
     return new Promise<QueuedSync[]>((resolve, reject) => {
       const tx = db.transaction(SYNC_STORE, 'readonly');
       const req = tx.objectStore(SYNC_STORE).get(SYNC_QUEUE_KEY);
@@ -436,5 +411,33 @@ export const syncBridge = {
     } catch (e) { }
   },
 
-  flushPendingSync: flushSyncQueue
+  flushPendingSync: flushSyncQueue,
+
+  /**
+   * استعادة البيانات من السحابة — مزامنة ثنائية الاتجاه
+   * تُستدعى عند فقدان البيانات المحلية لاسترجاعها من السيرفر
+   */
+  restoreFromCloud: async (): Promise<{ books: any[]; shelves: any[] } | null> => {
+    if (!navigator.onLine) return null;
+    try {
+      const deviceId = await syncBridge.getDeviceId();
+      await _wakeUpServer();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      const response = await fetch(`${API_BASE_URL}/sync/${deviceId}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.data) {
+          console.log('✅ تم استرجاع البيانات من السحابة!');
+          return { books: data.data.books || [], shelves: data.data.shelves || [] };
+        }
+      }
+    } catch (e: any) {
+      console.warn('⚠️ Cloud restore failed:', e.message);
+    }
+    return null;
+  }
 };
