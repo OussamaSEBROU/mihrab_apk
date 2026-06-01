@@ -21,6 +21,7 @@ export interface Annotation {
 
 export interface Book {
   id: string;
+  contentHash?: string; // SHA-256 fingerprint of PDF content — immutable identity
   shelfId: string;
   title: string;
   author: string;
