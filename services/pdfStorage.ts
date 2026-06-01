@@ -1,4 +1,6 @@
 import type { Book, FlashCard, ShelfData, Annotation, HabitData } from '../types';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Capacitor } from '@capacitor/core';
 
 const STORAGE_KEYS = {
   BOOKS: 'sanctuary_books',
@@ -179,15 +181,21 @@ const _requestPersistence = (): void => {
 let _db: IDBDatabase | null = null;
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
-const getDB = (): Promise<IDBDatabase> => {
+// ===================================================================
+// UNIFIED DATABASE v3 — Single source of truth
+// Stores: Manuscripts (PDFs), Covers, AppData (metadata), SyncQueue
+// ===================================================================
+export const getDB = (): Promise<IDBDatabase> => {
   if (_db) return Promise.resolve(_db);
   if (_dbPromise) return _dbPromise;
   _dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open('SanctuaryDB', 2);
+    const req = indexedDB.open('SanctuaryDB', 3);
     req.onupgradeneeded = (e: any) => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains('Manuscripts')) db.createObjectStore('Manuscripts');
       if (!db.objectStoreNames.contains('Covers')) db.createObjectStore('Covers');
+      if (!db.objectStoreNames.contains('AppData')) db.createObjectStore('AppData');
+      if (!db.objectStoreNames.contains('SyncQueue')) db.createObjectStore('SyncQueue');
     };
     req.onsuccess = () => {
       _db = req.result;
@@ -198,6 +206,56 @@ const getDB = (): Promise<IDBDatabase> => {
     req.onerror = () => { _dbPromise = null; reject(req.error); };
   });
   return _dbPromise;
+};
+
+// ===================================================================
+// SHA-256 CONTENT FINGERPRINT — Immutable book identity
+// ===================================================================
+export const computeFileHash = async (data: ArrayBuffer): Promise<string> => {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
+// ===================================================================
+// FILESYSTEM PDF BACKUP HELPERS
+// ===================================================================
+const _arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  const SLICE = 4096;
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += SLICE) {
+    const end = Math.min(i + SLICE, bytes.length);
+    for (let j = i; j < end; j++) bin += String.fromCharCode(bytes[j]);
+  }
+  return btoa(bin);
+};
+
+const _backupPdfToFilesystem = (id: string, data: ArrayBuffer): void => {
+  if (!Capacitor.isNativePlatform()) return;
+  Filesystem.writeFile({
+    path: `pdf_backup/${id}.pdf`,
+    data: _arrayBufferToBase64(data),
+    directory: Directory.Data,
+    recursive: true
+  }).catch(() => {});
+};
+
+const _recoverPdfFromFilesystem = async (id: string): Promise<ArrayBuffer | null> => {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    const result = await Filesystem.readFile({
+      path: `pdf_backup/${id}.pdf`,
+      directory: Directory.Data
+    });
+    if (result.data && typeof result.data === 'string') {
+      const bin = atob(result.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes.buffer;
+    }
+  } catch { /* no backup exists */ }
+  return null;
 };
 
 const _coverMemCache = new Map<string, string>();
@@ -217,7 +275,11 @@ export const pdfStorage = {
     return new Promise((res, rej) => {
       const tx = db.transaction('Manuscripts', 'readwrite');
       tx.objectStore('Manuscripts').put(data, id);
-      tx.oncomplete = () => res();
+      tx.oncomplete = () => {
+        // Layer 2: Filesystem backup — survives IndexedDB wipes
+        _backupPdfToFilesystem(id, data);
+        res();
+      };
       tx.onerror = () => rej(tx.error);
     });
   },
@@ -236,13 +298,28 @@ export const pdfStorage = {
   },
 
   getFile: async (id: string): Promise<ArrayBuffer | null> => {
-    const db = await getDB();
-    return new Promise((res, rej) => {
-      const tx = db.transaction('Manuscripts', 'readonly');
-      const req = tx.objectStore('Manuscripts').get(id);
-      req.onsuccess = () => res(req.result ?? null);
-      req.onerror = () => rej(req.error);
-    });
+    try {
+      const db = await getDB();
+      const result = await new Promise<ArrayBuffer | null>((res, rej) => {
+        const tx = db.transaction('Manuscripts', 'readonly');
+        const req = tx.objectStore('Manuscripts').get(id);
+        req.onsuccess = () => res(req.result ?? null);
+        req.onerror = () => rej(req.error);
+      });
+      if (result) return result;
+    } catch { /* IDB failed — try filesystem */ }
+
+    // Fallback: recover from filesystem backup
+    const recovered = await _recoverPdfFromFilesystem(id);
+    if (recovered) {
+      // Re-save to IDB for fast access next time
+      try {
+        const db = await getDB();
+        const tx = db.transaction('Manuscripts', 'readwrite');
+        tx.objectStore('Manuscripts').put(recovered, id);
+      } catch { /* non-critical */ }
+    }
+    return recovered;
   },
 
   deleteFile: async (id: string): Promise<void> => {
