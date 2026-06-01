@@ -12,7 +12,7 @@ import { CelebrationOverlay } from './components/CelebrationOverlay';
 import { Onboarding } from './components/Onboarding';
 import { translations } from './i18n/translations';
 import { storageService } from './services/storageService';
-import { pdfStorage } from './services/pdfStorage';
+import { pdfStorage, computeFileHash } from './services/pdfStorage';
 import { setupMobile, triggerHaptic } from './services/mobileService';
 import { communityService } from './services/communityService';
 import {
@@ -286,6 +286,31 @@ const App: React.FC = () => {
           type: 'success'
         });
       }
+
+      // ── ترحيل SHA-256: حساب بصمة المحتوى للكتب الحالية (في الخلفية) ──
+      const booksNeedingHash = loadedBooks.filter(b => !b.contentHash);
+      if (booksNeedingHash.length > 0) {
+        (async () => {
+          let migrated = false;
+          const updatedBooks = [...loadedBooks];
+          for (let i = 0; i < updatedBooks.length; i++) {
+            if (updatedBooks[i].contentHash) continue;
+            try {
+              const pdfData = await pdfStorage.getFile(updatedBooks[i].id);
+              if (pdfData && pdfData.byteLength > 0) {
+                const hash = await computeFileHash(pdfData);
+                updatedBooks[i] = { ...updatedBooks[i], contentHash: hash };
+                migrated = true;
+              }
+            } catch { /* non-critical — will retry next launch */ }
+          }
+          if (migrated) {
+            setBooks(updatedBooks);
+            storageService.saveBooks(updatedBooks);
+            console.log(`✅ تم ترحيل ${booksNeedingHash.length} كتاب إلى نظام البصمة الرقمية SHA-256`);
+          }
+        })();
+      }
     };
 
     initData();
@@ -455,15 +480,29 @@ const App: React.FC = () => {
     if (!newBookTitle || !pendingFileData) return;
     setIsExtracting(true);
     try {
-      const bookId = Math.random().toString(36).substr(2, 9);
-      // حفظ الـ PDF في IDB
+      // ── SHA-256: حساب البصمة الرقمية الثابتة للملف ──
+      const contentHash = await computeFileHash(pendingFileData);
+
+      // ── كشف التكرار: هل هذا الكتاب موجود مسبقاً؟ ──
+      const existingBook = books.find(b => b.contentHash === contentHash);
+      if (existingBook) {
+        alert(lang === 'ar'
+          ? `هذا الكتاب موجود بالفعل في مكتبتك: "${existingBook.title}"`
+          : `This book already exists in your library: "${existingBook.title}"`);
+        setIsExtracting(false);
+        return;
+      }
+
+      // ── معرّف مشتق من البصمة — ثابت وأبدي ──
+      const bookId = `book_${contentHash.substring(0, 12)}`;
+      // حفظ الـ PDF في IDB + نسخة احتياطية في Filesystem
       const bufferForStorage = pendingFileData.slice(0);
       await pdfStorage.saveFile(bookId, bufferForStorage);
       // الغلاف: إما جاهز من الخلفية، أو placeholder إذا لم يكتمل بعد
       const coverUrl = pendingCoverUrl || generateStyledCover(bookId, newBookTitle);
       await pdfStorage.saveCover(bookId, coverUrl);
       const newBook: Book = {
-        id: bookId, shelfId: activeShelfId, title: newBookTitle,
+        id: bookId, contentHash, shelfId: activeShelfId, title: newBookTitle,
         author: newBookAuthor || (lang === 'ar' ? 'مؤلف مجهول' : 'Unknown Scribe'),
         cover: coverUrl,
         content: "[VISUAL_PDF_MODE]", timeSpentSeconds: 0, dailyTimeSeconds: 0,
