@@ -3,6 +3,7 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 import type { Book, FlashCard, ShelfData, Annotation, HabitData } from '../types';
 import { getGMTDateString } from './notificationService';
+import { getDB } from './pdfStorage';
 
 const STORAGE_KEYS = {
   BOOKS: 'sanctuary_books',
@@ -14,45 +15,18 @@ const STORAGE_KEYS = {
 };
 
 // ===================================================================
-// IRONCLAD PERSISTENT STORAGE ENGINE — IndexedDB Layer
+// IRONCLAD PERSISTENT STORAGE ENGINE — Unified IndexedDB Layer
 // localStorage is volatile (cleared by system/cache clearing).
 // IndexedDB provides persistent, reliable storage that survives
 // cache clears, network loss, and system memory pressure.
-// Architecture: Memory Cache → localStorage → IndexedDB → Filesystem
+// Architecture: Memory Cache → localStorage → Unified IndexedDB → Filesystem
 // ===================================================================
-const META_DB_NAME = 'SanctuaryMetaDB';
-const META_DB_VERSION = 1;
 const META_STORE_NAME = 'AppData';
 
-let _metaDb: IDBDatabase | null = null;
-let _metaDbPromise: Promise<IDBDatabase> | null = null;
-
-const _getMetaDb = (): Promise<IDBDatabase> => {
-  if (_metaDb) return Promise.resolve(_metaDb);
-  if (_metaDbPromise) return _metaDbPromise;
-  _metaDbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(META_DB_NAME, META_DB_VERSION);
-    req.onupgradeneeded = (e: any) => {
-      const db = e.target.result as IDBDatabase;
-      if (!db.objectStoreNames.contains(META_STORE_NAME)) {
-        db.createObjectStore(META_STORE_NAME);
-      }
-    };
-    req.onsuccess = () => {
-      _metaDb = req.result;
-      _metaDb!.onclose = () => { _metaDb = null; _metaDbPromise = null; };
-      _metaDb!.onversionchange = () => { _metaDb?.close(); _metaDb = null; _metaDbPromise = null; };
-      resolve(_metaDb!);
-    };
-    req.onerror = () => { _metaDbPromise = null; reject(req.error); };
-  });
-  return _metaDbPromise;
-};
-
-/** Write data to IndexedDB — fire-and-forget, non-blocking */
+/** Write data to unified IndexedDB — fire-and-forget, non-blocking */
 const _persistToIDB = async (key: string, value: any): Promise<void> => {
   try {
-    const db = await _getMetaDb();
+    const db = await getDB();
     return new Promise<void>((resolve, reject) => {
       const tx = db.transaction(META_STORE_NAME, 'readwrite');
       tx.objectStore(META_STORE_NAME).put(JSON.stringify(value), key);
@@ -64,10 +38,10 @@ const _persistToIDB = async (key: string, value: any): Promise<void> => {
   }
 };
 
-/** Read data from IndexedDB */
+/** Read data from unified IndexedDB */
 const _readFromIDB = async <T = any>(key: string): Promise<T | null> => {
   try {
-    const db = await _getMetaDb();
+    const db = await getDB();
     return new Promise<T | null>((resolve, reject) => {
       const tx = db.transaction(META_STORE_NAME, 'readonly');
       const req = tx.objectStore(META_STORE_NAME).get(key);
@@ -518,8 +492,54 @@ export const storageService = {
     let booksRecovered = 0;
     let shelvesRecovered = 0;
 
-    // Initialize IndexedDB connection early
-    try { await _getMetaDb(); } catch (e) { console.warn('⚠️ MetaDB init failed:', e); }
+    // Initialize unified IndexedDB connection early
+    try { await getDB(); } catch (e) { console.warn('⚠️ Unified DB init failed:', e); }
+
+    // ── ترحيل البيانات من قاعدة SanctuaryMetaDB القديمة (مرة واحدة) ──
+    try {
+      const oldDbExists = await new Promise<boolean>((resolve) => {
+        const req = indexedDB.open('SanctuaryMetaDB', 1);
+        req.onsuccess = () => { req.result.close(); resolve(true); };
+        req.onerror = () => resolve(false);
+        req.onupgradeneeded = (e: any) => {
+          // DB doesn't exist, abort creation
+          e.target.transaction.abort();
+          resolve(false);
+        };
+      });
+      if (oldDbExists) {
+        const oldDb = await new Promise<IDBDatabase>((resolve, reject) => {
+          const req = indexedDB.open('SanctuaryMetaDB', 1);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        if (oldDb.objectStoreNames.contains('AppData')) {
+          const tx = oldDb.transaction('AppData', 'readonly');
+          const allKeys = await new Promise<IDBValidKey[]>((resolve) => {
+            const req = tx.objectStore('AppData').getAllKeys();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => resolve([]);
+          });
+          for (const key of allKeys) {
+            const value = await new Promise<any>((resolve) => {
+              const tx2 = oldDb.transaction('AppData', 'readonly');
+              const req = tx2.objectStore('AppData').get(key);
+              req.onsuccess = () => resolve(req.result);
+              req.onerror = () => resolve(null);
+            });
+            if (value != null) {
+              const udb = await getDB();
+              const utx = udb.transaction('AppData', 'readwrite');
+              utx.objectStore('AppData').put(value, key);
+            }
+          }
+          console.log(`✅ تم ترحيل ${allKeys.length} عنصر من SanctuaryMetaDB إلى قاعدة البيانات الموحدة`);
+        }
+        oldDb.close();
+      }
+    } catch (e) {
+      console.warn('⚠️ Migration from old SanctuaryMetaDB failed (non-critical):', e);
+    }
 
     // ── فحص الكتب ──
     const currentBooks = localStorage.getItem(STORAGE_KEYS.BOOKS);
