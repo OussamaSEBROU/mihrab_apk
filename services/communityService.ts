@@ -86,7 +86,7 @@ const WRITE_CHUNK_SIZE = 512 * 1024;
 const _writeChunked = async (
   bytes: Uint8Array,
   filename: string,
-  directory: typeof Directory.Cache | typeof Directory.Documents = Directory.Cache
+  directory: typeof Directory.Cache | typeof Directory.Documents = Directory.Documents
 ): Promise<string> => {
   const firstChunk = bytes.subarray(0, Math.min(WRITE_CHUNK_SIZE, bytes.length));
   const result = await Filesystem.writeFile({
@@ -471,7 +471,7 @@ const _writeAndShare = async (
   text: string,
   dialogTitle: string
 ): Promise<void> => {
-  const uri = await _writeChunked(zipBytes, filename, Directory.Cache);
+  const uri = await _writeChunked(zipBytes, filename, Directory.Documents);
   await Share.share({ title, text, files: [uri], dialogTitle });
 };
 // ─────────────────────────────────────────────────────────
@@ -604,7 +604,7 @@ export const communityService = {
     const zipBytes = await _buildSingleBookZip(book, userName);
     const safeName = book.title.replace(/[\\/\*?:"<>|]/g, '').trim() || 'book';
     const filename = `${safeName}${FILE_EXTENSIONS.SINGLE_BOOK}`;
-    const uri = await _writeChunked(zipBytes, filename, Directory.Cache);
+    const uri = await _writeChunked(zipBytes, filename, Directory.Documents);
     return { uri, filename };
   },
   /**
