@@ -25,7 +25,7 @@ const _capacitorShareBlob = async (
   const written = await Filesystem.writeFile({
     path: filename,
     data: base64,
-    directory: Directory.Cache,
+    directory: Directory.Documents,
     recursive: true,
   });
 
@@ -37,7 +37,7 @@ const _capacitorShareBlob = async (
   });
 
   setTimeout(async () => {
-    try { await Filesystem.deleteFile({ path: filename, directory: Directory.Cache }); }
+    try { await Filesystem.deleteFile({ path: filename, directory: Directory.Documents }); }
     catch { /* ignore */ }
   }, 30_000);
 };
