@@ -59,7 +59,36 @@ export enum ViewState {
   SHELF = 'SHELF',
   READER = 'READER',
   VAULT = 'VAULT',
-  DASHBOARD = 'DASHBOARD'
+  DASHBOARD = 'DASHBOARD',
+  DEEP_SESSION = 'DEEP_SESSION'
+}
+
+export interface DeepSession {
+  id: string;
+  bookId: string;
+  bookTitle: string;
+  contentHash: string;
+  targetMinutes: number;
+  actualMinutes: number;
+  completionPercentage: number;
+  isCompleted: boolean;       // >= 80%
+  isPerfect: boolean;         // 100%
+  shieldsEarned: number;
+  starsEarned: number;
+  startedAt: number;
+  endedAt: number;
+  wasExtended: boolean;
+  extensionCount: number;
+}
+
+export interface DeepSessionStats {
+  totalHours: number;
+  totalSessions: number;
+  completedSessions: number;
+  perfectSessions: number;
+  completionRate: number;
+  totalShieldsEarned: number;
+  totalStarsEarned: number;
 }
 
 export type Language = 'en' | 'ar';
