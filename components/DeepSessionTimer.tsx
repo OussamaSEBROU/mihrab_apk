@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { Language, Book } from '../types';
+import type { Language, Book, DeepSession } from '../types';
 import { translations } from '../i18n/translations';
 import { deepSessionService } from '../services/deepSessionService';
-import { pdfStorage } from '../services/pdfStorage';
+import Reader from './Reader';
 import {
-  Timer, AlertTriangle, X, BookOpen, ShieldCheck,
-  Star, ChevronRight, Pause, Play, Lock
+  Timer, AlertTriangle, ShieldCheck, Star,
+  ChevronUp, ChevronDown, Lock, Sparkles, X
 } from 'lucide-react';
 
 const MotionDiv = motion.div as any;
@@ -26,7 +26,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
 
-  // ── TIMER STATE ──
+  // ── DEEP SESSION TIMER STATE (independent of Reader's own timer) ──
   const [totalTargetSeconds, setTotalTargetSeconds] = useState(targetMinutes * 60);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isRunning, setIsRunning] = useState(true);
@@ -34,31 +34,21 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
   const [showExtendMenu, setShowExtendMenu] = useState(false);
   const [extensionCount, setExtensionCount] = useState(0);
   const [sessionCompleted, setSessionCompleted] = useState(false);
-
-  // ── PDF STATE ──
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(book.lastPage || 1);
-  const [totalPages, setTotalPages] = useState(0);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pdfDocRef = useRef<any>(null);
+  const [isTimerBarCollapsed, setIsTimerBarCollapsed] = useState(false);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const startTimeRef = useRef<number>(Date.now());
 
   // ── COMPUTED VALUES ──
   const remainingSeconds = Math.max(0, totalTargetSeconds - elapsedSeconds);
   const progressPercent = Math.min(100, (elapsedSeconds / totalTargetSeconds) * 100);
   const thresholdReached = progressPercent >= 80;
-  const isComplete = remainingSeconds <= 0;
-
   const hours = Math.floor(remainingSeconds / 3600);
   const minutes = Math.floor((remainingSeconds % 3600) / 60);
   const seconds = remainingSeconds % 60;
-
   const formatTime = (h: number, m: number, s: number) =>
     `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 
-  // ── REWARDS PREVIEW ──
+  // ── REWARDS PREVIEW (live) ──
   const rewardsPreview = useMemo(() => {
     return deepSessionService.calculateRewards(
       totalTargetSeconds / 60,
@@ -67,7 +57,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     );
   }, [totalTargetSeconds, elapsedSeconds, progressPercent]);
 
-  // ── TIMER LOGIC ──
+  // ── DEEP SESSION COUNTDOWN TIMER ──
   useEffect(() => {
     if (isRunning && !sessionCompleted) {
       intervalRef.current = setInterval(() => {
@@ -81,65 +71,10 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
         });
       }, 1000);
     }
-
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [isRunning, totalTargetSeconds, sessionCompleted]);
-
-  // ── PDF LOADING ──
-  useEffect(() => {
-    const loadPdf = async () => {
-      try {
-        const data = await pdfStorage.getFile(book.id);
-        if (data && data.byteLength > 0) {
-          const blob = new Blob([data], { type: 'application/pdf' });
-          const url = URL.createObjectURL(blob);
-          setPdfUrl(url);
-
-          if (typeof pdfjsLib !== 'undefined') {
-            const pdf = await pdfjsLib.getDocument({ data }).promise;
-            pdfDocRef.current = pdf;
-            setTotalPages(pdf.numPages);
-            renderPage(pdf, book.lastPage || 1);
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to load PDF for deep session:', e);
-      }
-    };
-    loadPdf();
-
-    return () => {
-      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-    };
-  }, [book.id]);
-
-  const renderPage = async (pdf: any, pageNum: number) => {
-    if (!pdf || !canvasRef.current) return;
-    try {
-      const page = await pdf.getPage(Math.min(pageNum, pdf.numPages));
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      const viewport = page.getViewport({ scale: window.devicePixelRatio * 1.2 });
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      canvas.style.width = '100%';
-      canvas.style.height = 'auto';
-
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      setCurrentPage(pageNum);
-    } catch (e) {
-      console.warn('Page render failed:', e);
-    }
-  };
-
-  const goToPage = (delta: number) => {
-    const newPage = Math.max(1, Math.min(totalPages, currentPage + delta));
-    if (pdfDocRef.current) renderPage(pdfDocRef.current, newPage);
-  };
 
   // ── BACK BUTTON PROTECTION ──
   useEffect(() => {
@@ -151,7 +86,17 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // ── COMPLETE SESSION ──
+  // ── HANDLE READER'S onBack — intercept to show force-end confirmation ──
+  const handleReaderBack = useCallback(() => {
+    setShowForceEndConfirm(true);
+  }, []);
+
+  // ── HANDLE READER'S onStatsUpdate — pass through normally ──
+  const handleStatsUpdate = useCallback((starReached?: number | null) => {
+    // Reader handles its own book stats; we don't interfere
+  }, []);
+
+  // ── COMPLETE SESSION (called on natural end or force end) ──
   const handleComplete = useCallback((forceEnd: boolean = false) => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     setIsRunning(false);
@@ -185,7 +130,9 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     setShowExtendMenu(false);
   }, []);
 
-  // ── TIME COMPLETED SCREEN ──
+  // ═══════════════════════════════════════════════════════════
+  // SESSION COMPLETED OVERLAY — shown when timer reaches 0
+  // ═══════════════════════════════════════════════════════════
   if (sessionCompleted) {
     return (
       <MotionDiv
@@ -229,10 +176,11 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
           </div>
 
           <p className="text-xs text-white/50 uppercase font-bold">
-            {isRTL ? `${Math.round(elapsedSeconds / 60)} دقيقة من أصل ${Math.round(totalTargetSeconds / 60)} دقيقة (100%)` : `${Math.round(elapsedSeconds / 60)} of ${Math.round(totalTargetSeconds / 60)} minutes (100%)`}
+            {isRTL
+              ? `${Math.round(elapsedSeconds / 60)} دقيقة من أصل ${Math.round(totalTargetSeconds / 60)} دقيقة (100%)`
+              : `${Math.round(elapsedSeconds / 60)} of ${Math.round(totalTargetSeconds / 60)} minutes (100%)`}
           </p>
 
-          {/* Extend or Finish */}
           <div className="space-y-3">
             <button
               onClick={() => handleComplete(false)}
@@ -249,7 +197,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
           </div>
         </div>
 
-        {/* Extend Menu */}
+        {/* Extend Menu Modal */}
         <AnimatePresence>
           {showExtendMenu && (
             <MotionDiv
@@ -295,138 +243,141 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     );
   }
 
-  // ── MAIN SESSION SCREEN ──
+  // ═══════════════════════════════════════════════════════════
+  // MAIN RENDER — Reader (full features) + Deep Session Overlay
+  // ═══════════════════════════════════════════════════════════
   return (
-    <MotionDiv
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className={`fixed inset-0 z-[15000] bg-black flex flex-col ${fontClass}`}
-    >
-      {/* Top Bar — Timer + Progress */}
-      <div className="shrink-0 px-4 py-3 bg-black/90 backdrop-blur-xl border-b border-white/5 z-10">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <Lock size={12} className="text-red-600" />
-            <span className="text-[8px] font-black uppercase tracking-widest text-red-600">
-              {t.deepSessionTitle}
-            </span>
-          </div>
+    <div className={`fixed inset-0 z-[15000] bg-black ${fontClass}`}>
+      {/* ────────────────────────────────────────────────────── */}
+      {/* THE REAL READER — all original features intact        */}
+      {/* ────────────────────────────────────────────────────── */}
+      <Reader
+        key={book.id}
+        book={book}
+        lang={lang}
+        onBack={handleReaderBack}
+        onStatsUpdate={handleStatsUpdate}
+      />
 
-          <div className="flex items-center gap-2">
-            {/* Rewards Preview */}
-            <div className="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-full">
-              <ShieldCheck size={10} className="text-amber-400" />
-              <span className="text-[9px] font-black text-amber-400">{rewardsPreview.shields}</span>
-            </div>
-            <div className="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-full">
-              <Star size={10} className="text-amber-400 fill-amber-400" />
-              <span className="text-[9px] font-black text-amber-400">{rewardsPreview.stars}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Countdown */}
-        <div className="text-center mb-2">
-          <p className="text-3xl font-black text-white tracking-[0.15em]" style={{ fontFamily: 'monospace' }}>
-            {formatTime(hours, minutes, seconds)}
-          </p>
-          <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mt-1">
-            {t.deepSessionCountdown}
-          </p>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="relative">
-          <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-            <MotionDiv
-              animate={{ width: `${progressPercent}%` }}
-              transition={{ duration: 0.5 }}
-              className={`h-full rounded-full transition-colors duration-500 ${
-                thresholdReached
-                  ? 'bg-gradient-to-r from-emerald-600 to-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]'
-                  : 'bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_10px_rgba(255,0,0,0.5)]'
-              }`}
-            />
-          </div>
-          {/* 80% Threshold Marker */}
-          <div
-            className="absolute top-0 bottom-0 flex flex-col items-center"
-            style={{ left: '80%' }}
-          >
-            <div className={`w-px h-full ${thresholdReached ? 'bg-emerald-500' : 'bg-amber-500/50'}`} />
-          </div>
-          <div className="flex justify-between mt-1">
-            <span className="text-[7px] font-black uppercase text-white/20">
-              {Math.round(progressPercent)}%
-            </span>
-            <span className={`text-[7px] font-black uppercase tracking-wider ${thresholdReached ? 'text-emerald-500' : 'text-amber-500/50'}`}>
-              {thresholdReached ? t.deepSessionThresholdReached : t.deepSessionThreshold}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* PDF Reader Area */}
-      <div className="flex-1 overflow-y-auto bg-black relative" onClick={() => goToPage(1)}>
-        {pdfUrl ? (
-          <div className="flex flex-col items-center py-2">
-            <canvas ref={canvasRef} className="max-w-full" />
-            {/* Page Navigation */}
-            <div className="flex items-center gap-4 py-3 text-white/40">
-              <button
-                onClick={(e) => { e.stopPropagation(); goToPage(-1); }}
-                className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-all active:scale-90"
-                disabled={currentPage <= 1}
-              >
-                <ChevronRight size={16} className={isRTL ? '' : 'rotate-180'} />
-              </button>
-              <span className="text-[10px] font-black uppercase tracking-wider">
-                {currentPage} / {totalPages}
+      {/* ────────────────────────────────────────────────────── */}
+      {/* DEEP SESSION FLOATING OVERLAY — Timer Bar on top      */}
+      {/* ────────────────────────────────────────────────────── */}
+      <MotionDiv
+        initial={{ y: -60 }}
+        animate={{ y: 0 }}
+        className="fixed top-0 left-0 right-0 z-[16000] pointer-events-none"
+      >
+        {/* Collapsed Mini Bar */}
+        {isTimerBarCollapsed ? (
+          <div className="pointer-events-auto flex justify-center pt-1">
+            <button
+              onClick={() => setIsTimerBarCollapsed(false)}
+              className="flex items-center gap-2 px-4 py-1.5 bg-black/80 backdrop-blur-xl rounded-b-xl border border-white/10 border-t-0 shadow-2xl"
+            >
+              <Lock size={10} className="text-red-600" />
+              <span className="text-[9px] font-black text-white tracking-[0.15em]" style={{ fontFamily: 'monospace' }}>
+                {formatTime(hours, minutes, seconds)}
               </span>
-              <button
-                onClick={(e) => { e.stopPropagation(); goToPage(1); }}
-                className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-all active:scale-90"
-                disabled={currentPage >= totalPages}
-              >
-                <ChevronRight size={16} className={isRTL ? 'rotate-180' : ''} />
-              </button>
-            </div>
+              {/* Mini progress dot */}
+              <div className={`w-1.5 h-1.5 rounded-full ${thresholdReached ? 'bg-emerald-500' : 'bg-red-600'} animate-pulse`} />
+              <ChevronDown size={10} className="text-white/30" />
+            </button>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center h-full">
-            <div className="text-center space-y-4">
-              <BookOpen size={48} className="text-white/10 mx-auto" />
-              <p className="text-xs font-bold text-white/20 uppercase tracking-widest">{book.title}</p>
-            </div>
+          /* Expanded Timer Bar */
+          <div className="pointer-events-auto mx-3 mt-14 md:mt-16">
+            <MotionDiv
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-black/85 backdrop-blur-2xl border border-white/10 rounded-2xl p-3 shadow-[0_8px_32px_rgba(0,0,0,0.8)]"
+            >
+              {/* Row 1: Lock icon + Countdown + Rewards + Collapse */}
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-red-600/20 flex items-center justify-center">
+                    <Lock size={10} className="text-red-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-white tracking-[0.15em] leading-none" style={{ fontFamily: 'monospace' }}>
+                      {formatTime(hours, minutes, seconds)}
+                    </p>
+                    <p className="text-[6px] font-black uppercase tracking-widest text-white/25 mt-0.5">
+                      {t.deepSessionCountdown}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Live Rewards */}
+                  <div className="flex items-center gap-1.5 bg-white/5 px-2 py-1 rounded-full">
+                    <ShieldCheck size={9} className="text-amber-400" />
+                    <span className="text-[8px] font-black text-amber-400">{rewardsPreview.shields}</span>
+                    <div className="w-px h-2 bg-white/10" />
+                    <Star size={9} className="text-amber-400 fill-amber-400" />
+                    <span className="text-[8px] font-black text-amber-400">{rewardsPreview.stars}</span>
+                  </div>
+
+                  {/* Collapse button */}
+                  <button
+                    onClick={() => setIsTimerBarCollapsed(true)}
+                    className="w-6 h-6 flex items-center justify-center rounded-full bg-white/5 text-white/30 hover:text-white transition-all"
+                  >
+                    <ChevronUp size={12} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: Progress Bar with 80% threshold */}
+              <div className="relative">
+                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <MotionDiv
+                    animate={{ width: `${progressPercent}%` }}
+                    transition={{ duration: 0.5 }}
+                    className={`h-full rounded-full transition-colors duration-500 ${
+                      thresholdReached
+                        ? 'bg-gradient-to-r from-emerald-600 to-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                        : 'bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_8px_rgba(255,0,0,0.5)]'
+                    }`}
+                  />
+                </div>
+                {/* 80% Threshold Marker */}
+                <div className="absolute top-0 bottom-0 flex items-center" style={{ left: '80%' }}>
+                  <div className={`w-px h-full ${thresholdReached ? 'bg-emerald-500' : 'bg-amber-500/50'}`} />
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="text-[6px] font-black uppercase text-white/20">
+                    {Math.round(progressPercent)}%
+                  </span>
+                  <span className={`text-[6px] font-black uppercase tracking-wider ${thresholdReached ? 'text-emerald-500' : 'text-amber-500/50'}`}>
+                    {thresholdReached ? t.deepSessionThresholdReached : t.deepSessionThreshold}
+                  </span>
+                </div>
+              </div>
+
+              {/* Row 3: Force End Button (small, bottom-right) */}
+              <div className="flex justify-end mt-1">
+                <button
+                  onClick={() => setShowForceEndConfirm(true)}
+                  className="px-3 py-1 rounded-lg bg-red-600/10 border border-red-600/15 text-red-500 text-[7px] font-black uppercase tracking-wider hover:bg-red-600/30 transition-all active:scale-95"
+                >
+                  {t.deepSessionForceEnd}
+                </button>
+              </div>
+            </MotionDiv>
           </div>
         )}
-      </div>
+      </MotionDiv>
 
-      {/* Bottom Bar — Force End */}
-      <div className="shrink-0 px-4 py-3 bg-black/90 backdrop-blur-xl border-t border-white/5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <BookOpen size={14} className="text-red-600" />
-          <span className="text-[9px] font-black text-white/50 uppercase tracking-wider truncate max-w-[180px]">
-            {book.title}
-          </span>
-        </div>
-
-        <button
-          onClick={() => setShowForceEndConfirm(true)}
-          className="px-4 py-2 rounded-xl bg-red-600/10 border border-red-600/20 text-red-500 text-[9px] font-black uppercase tracking-wider hover:bg-red-600/30 transition-all active:scale-95"
-        >
-          {t.deepSessionForceEnd}
-        </button>
-      </div>
-
-      {/* Force End Confirmation Modal */}
+      {/* ────────────────────────────────────────────────────── */}
+      {/* FORCE END CONFIRMATION MODAL                          */}
+      {/* ────────────────────────────────────────────────────── */}
       <AnimatePresence>
         {showForceEndConfirm && (
           <MotionDiv
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[16000] flex items-center justify-center bg-black/80 backdrop-blur-lg"
+            className="fixed inset-0 z-[17000] flex items-center justify-center bg-black/80 backdrop-blur-lg"
           >
             <MotionDiv
               initial={{ scale: 0.85 }}
@@ -464,7 +415,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
           </MotionDiv>
         )}
       </AnimatePresence>
-    </MotionDiv>
+    </div>
   );
 };
 
