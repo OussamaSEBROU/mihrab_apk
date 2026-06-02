@@ -10,6 +10,10 @@ import Reader from './components/Reader';
 import { Dashboard } from './components/Dashboard';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
 import { Onboarding } from './components/Onboarding';
+import { DeepSessionOnboarding } from './components/DeepSessionOnboarding';
+import DeepSessionTimer from './components/DeepSessionTimer';
+import { DeepSessionComplete } from './components/DeepSessionComplete';
+import { deepSessionService } from './services/deepSessionService';
 import { translations } from './i18n/translations';
 import { storageService } from './services/storageService';
 import { pdfStorage, computeFileHash } from './services/pdfStorage';
@@ -18,7 +22,7 @@ import { communityService } from './services/communityService';
 import {
   Menu, X, Plus, Clock, Star, BookOpen, Trash2, Globe, LayoutDashboard, Library,
   Check, Upload, Loader2, BookMarked, AlertTriangle,
-  ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson
+  ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson, Timer
 } from 'lucide-react';
 // Global safety check for pdfjsLib to prevent initialization crashes if CDN fails to load
 if (typeof pdfjsLib !== 'undefined') {
@@ -190,6 +194,11 @@ const App: React.FC = () => {
   // ── FORMAT MISMATCH ALERT STATE ──
   const [showFormatMismatch, setShowFormatMismatch] = useState(false);
   const [formatMismatchMessage, setFormatMismatchMessage] = useState('');
+  // ── DEEP READING SESSION STATE ──
+  const [showDeepSessionOnboarding, setShowDeepSessionOnboarding] = useState(false);
+  const [deepSessionBook, setDeepSessionBook] = useState<Book | null>(null);
+  const [deepSessionMinutes, setDeepSessionMinutes] = useState(90);
+  const [deepSessionResult, setDeepSessionResult] = useState<any>(null);
   const shelfDragY = useMotionValue(0);
   // Auto-hide UI for Zen Aesthetics (Shelf View)
   useEffect(() => {
@@ -838,6 +847,11 @@ const App: React.FC = () => {
                     <div className="p-3 rounded-xl bg-red-600/20 group-hover:bg-red-600/40"><LayoutDashboard size={20} className="text-red-600 group-hover:text-white" /></div>
                     <div className="flex flex-col items-start"><span className="text-[11px] font-black uppercase tracking-widest group-hover:text-white">{t.dashboard}</span><span className="text-[7.5px] uppercase font-black opacity-30 group-hover:text-white/60">{t.cognitiveMetrics}</span></div>
                   </button>
+                  {/* ── DEEP SESSION SIDEBAR BUTTON ── */}
+                  <button onClick={() => { setShowDeepSessionOnboarding(true); setIsSidebarOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-[1.5rem] bg-white/[0.03] border border-white/5 hover:bg-purple-600/20 transition-all group">
+                    <div className="p-3 rounded-xl bg-purple-600/20 group-hover:bg-purple-600/40"><Timer size={20} className="text-purple-500 group-hover:text-white" /></div>
+                    <div className="flex flex-col items-start"><span className="text-[11px] font-black uppercase tracking-widest group-hover:text-white">{lang === 'ar' ? 'جلسة الكتاب' : 'Deep Session'}</span><span className="text-[7.5px] uppercase font-black opacity-30 group-hover:text-white/60">{lang === 'ar' ? 'الحاضنة المعرفية' : 'The Intellectual Incubator'}</span></div>
+                  </button>
                   <a
                     href={`mailto:oussama.sebrou@gmail.com?subject=${encodeURIComponent(t.contactSubject)}&body=${encodeURIComponent(t.contactBody)}`}
                     className="w-full flex items-center gap-4 p-4 rounded-[1.5rem] bg-white/[0.03] border border-white/5 hover:bg-emerald-600/20 transition-all group no-underline"
@@ -1001,6 +1015,26 @@ const App: React.FC = () => {
             )}
             {view === ViewState.DASHBOARD && <MotionDiv key="dashboard" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20, zIndex: -1 }} transition={{ duration: 0.2 }} className="fixed inset-0 z-[4000] bg-[#020502] overflow-y-auto pointer-events-auto"><Dashboard books={books} shelves={shelves} lang={lang} onBack={() => setView(ViewState.SHELF)} /></MotionDiv>}
             {view === ViewState.READER && selectedBook && <MotionDiv key="reader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, zIndex: -1 }} transition={{ duration: 0.2 }} className="fixed inset-0 z-[5000] bg-black pointer-events-auto"><Reader key={selectedBook.id} book={selectedBook} lang={lang} onBack={handleReaderBack} onStatsUpdate={handleStatsUpdate} /></MotionDiv>}
+            {view === ViewState.DEEP_SESSION && deepSessionBook && (
+              <MotionDiv key="deep-session" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, zIndex: -1 }} transition={{ duration: 0.2 }} className="fixed inset-0 z-[14000] bg-black pointer-events-auto">
+                <DeepSessionTimer
+                  book={deepSessionBook}
+                  targetMinutes={deepSessionMinutes}
+                  lang={lang}
+                  onComplete={(session) => {
+                    // Save the session
+                    deepSessionService.addSession(session);
+                    setDeepSessionResult(session);
+                    setView(ViewState.SHELF);
+                    setDeepSessionBook(null);
+                  }}
+                  onCancel={() => {
+                    setView(ViewState.SHELF);
+                    setDeepSessionBook(null);
+                  }}
+                />
+              </MotionDiv>
+            )}
           </AnimatePresence>
         {/* EXPORT SHELF MODAL */}
         <AnimatePresence>
@@ -1428,6 +1462,36 @@ const App: React.FC = () => {
           )}
           {celebrationStar && <CelebrationOverlay starCount={celebrationStar} lang={lang} onComplete={handleCelebrationComplete} />}
           {showOnboarding && <Onboarding lang={lang} onComplete={handleOnboardingComplete} />}
+          {/* ── DEEP SESSION ONBOARDING OVERLAY ── */}
+          {showDeepSessionOnboarding && (
+            <DeepSessionOnboarding
+              books={books}
+              lang={lang}
+              onStart={(bookId, minutes) => {
+                const book = books.find(b => b.id === bookId);
+                if (book) {
+                  setDeepSessionBook(book);
+                  setDeepSessionMinutes(minutes);
+                  setShowDeepSessionOnboarding(false);
+                  setView(ViewState.DEEP_SESSION);
+                }
+              }}
+              onCancel={() => setShowDeepSessionOnboarding(false)}
+            />
+          )}
+          {/* ── DEEP SESSION RESULT OVERLAY ── */}
+          {deepSessionResult && (
+            <DeepSessionComplete
+              session={deepSessionResult}
+              lang={lang}
+              onReturn={() => {
+                if (deepSessionResult.isCompleted && deepSessionResult.isPerfect) {
+                  setCelebrationStar(deepSessionResult.starsEarned);
+                }
+                setDeepSessionResult(null);
+              }}
+            />
+          )}
           {shelfToDelete && (
             <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[11000] flex items-center justify-center p-6 bg-black/98 backdrop-blur-3xl">
               <MotionDiv initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#0b140b] border border-white/10 p-10 rounded-[4rem] w-full max-w-md text-center">
@@ -1480,7 +1544,7 @@ const App: React.FC = () => {
             </MotionDiv>
           )}
         </AnimatePresence>
-        {view !== ViewState.READER && (
+        {view !== ViewState.READER && view !== ViewState.DEEP_SESSION && (
           <MotionDiv 
             initial={{ y: 50, opacity: 0 }} 
             animate={{ y: 0, opacity: isNavVisible ? 1 : 0.15 }} 
@@ -1534,6 +1598,13 @@ const App: React.FC = () => {
                 {view === ViewState.DASHBOARD && (
                   <MotionDiv layoutId="nav-glow" className="absolute inset-0 bg-red-600/[0.06] rounded-xl -z-10" />
                 )}
+              </button>
+              <div className="w-px h-3.5 bg-white/10" />
+              <button 
+                onClick={() => { setShowDeepSessionOnboarding(true); triggerHaptic(); }} 
+                className={`relative flex items-center gap-2 p-2 px-4 rounded-xl transition-all duration-500 group text-white/20 hover:text-white/40`}
+              >
+                <Timer size={16} className="transition-all duration-500" />
               </button>
             </div>
           </MotionDiv>
