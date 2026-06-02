@@ -1,6 +1,7 @@
 import { Device } from '@capacitor/device';
 import { App as CapApp } from '@capacitor/app';
 import { getDB } from './pdfStorage';
+import { deepSessionService } from './deepSessionService';
 
 // رابط الـ Backend الجديد والمطور على موقع Render
 const API_BASE_URL = 'https://mihrabadminv2.onrender.com/api';
@@ -168,7 +169,9 @@ const _buildFullPayload = async (books: any[], shelves: any[], activeStatus: str
           lastReadAt: lastBook.lastReadAt
         } : null,
         shelfStats
-      }
+      },
+      // ── DEEP READING SESSIONS DATA ──
+      deepSessions: deepSessionService.getPayloadData()
     }
   };
 };
