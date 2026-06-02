@@ -4,6 +4,8 @@ import { Language } from '../types';
 import type { Book, ShelfData } from '../types';
 import { translations } from '../i18n/translations';
 import { storageService } from '../services/storageService';
+import { deepSessionService } from '../services/deepSessionService';
+import type { DeepSession, DeepSessionStats } from '../types';
 import { 
   Clock, Star, ChevronLeft, BrainCircuit, Activity, Trash2, AlertTriangle,
   BarChart3, LineChart, BookOpen, Zap, Globe2, ShieldCheck, Fingerprint, 
@@ -880,6 +882,199 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
            </div>
         </div>
       </section>
+
+      {/* ══════════ DEEP READING LOG SECTION ══════════ */}
+      {(() => {
+        const dsStats = deepSessionService.getStats();
+        const dsSessions = deepSessionService.getSessions();
+        const hasDeepSessions = dsSessions.length > 0;
+        
+        // SVG Evolution Chart Data
+        const chartSessions = dsSessions.slice(0, 20).reverse();
+        const chartMaxMin = Math.max(...chartSessions.map(s => s.actualMinutes), 1);
+        const chartW = 600;
+        const chartH = 200;
+        const chartPoints = chartSessions.map((s, i) => {
+          const x = (i / Math.max(chartSessions.length - 1, 1)) * (chartW - 40) + 20;
+          const y = chartH - 20 - ((s.actualMinutes / chartMaxMin) * (chartH - 40));
+          return { x, y, session: s };
+        });
+        const chartPath = chartPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+        const chartAreaPath = chartPath + ` L ${chartPoints[chartPoints.length - 1]?.x || 0} ${chartH - 20} L ${chartPoints[0]?.x || 0} ${chartH - 20} Z`;
+        
+        return (
+          <section className="bg-gradient-to-br from-purple-600/[0.04] via-white/[0.02] to-white/[0.01] border border-purple-600/20 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-8 shadow-4xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
+              <Timer size={200} />
+            </div>
+            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-purple-600/20 rounded-xl border border-purple-600/30">
+                  <Timer className="text-purple-400 size-5 md:size-8" />
+                </div>
+                <div>
+                  <h3 className="text-lg md:text-4xl font-black uppercase tracking-tighter italic">
+                    {isRTL ? t.deepSessionLogTitle : t.deepSessionLogTitle}
+                  </h3>
+                  <p className="text-[8px] md:text-xs uppercase font-bold tracking-widest text-white/30 mt-1">
+                    {t.deepSessionLogSubtitle}
+                  </p>
+                </div>
+              </div>
+              {hasDeepSessions && (
+                <div className="flex items-center gap-2 bg-purple-600/10 px-4 py-2 rounded-full border border-purple-600/20">
+                  <div className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+                  <span className="text-[8px] font-black uppercase tracking-widest text-purple-400">
+                    {dsStats.totalSessions} {isRTL ? 'جلسة' : 'sessions'}
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            {!hasDeepSessions ? (
+              <div className="h-[150px] flex items-center justify-center text-white/20 uppercase font-black tracking-widest text-[10px] italic relative z-10">
+                {t.deepSessionNoSessions}
+              </div>
+            ) : (
+              <div className="space-y-6 relative z-10">
+                {/* Key Metrics Cards */}
+                <div className="grid grid-cols-3 gap-3 md:gap-4">
+                  <div className="p-4 md:p-6 bg-black/40 border border-white/5 rounded-2xl md:rounded-3xl text-center">
+                    <Timer className="text-purple-400 size-4 md:size-5 mx-auto mb-2" />
+                    <p className="text-[7px] font-black uppercase tracking-widest text-white/30 mb-1">
+                      {t.deepSessionTotalHours}
+                    </p>
+                    <p className="text-2xl md:text-3xl font-black text-white italic">{dsStats.totalHours}</p>
+                    <p className="text-[7px] font-bold text-white/20 uppercase">{t.deepSessionHours}</p>
+                  </div>
+                  <div className="p-4 md:p-6 bg-black/40 border border-white/5 rounded-2xl md:rounded-3xl text-center">
+                    <Zap className="text-emerald-400 size-4 md:size-5 mx-auto mb-2" />
+                    <p className="text-[7px] font-black uppercase tracking-widest text-white/30 mb-1">
+                      {t.deepSessionCompletionRate}
+                    </p>
+                    <p className="text-2xl md:text-3xl font-black text-white italic">{dsStats.completionRate}%</p>
+                  </div>
+                  <div className="p-4 md:p-6 bg-black/40 border border-white/5 rounded-2xl md:rounded-3xl text-center">
+                    <ShieldCheck className="text-amber-400 size-4 md:size-5 mx-auto mb-2" />
+                    <p className="text-[7px] font-black uppercase tracking-widest text-white/30 mb-1">
+                      {t.deepSessionTotalBadges}
+                    </p>
+                    <p className="text-2xl md:text-3xl font-black text-white italic">{dsStats.totalShieldsEarned + dsStats.totalStarsEarned}</p>
+                  </div>
+                </div>
+                
+                {/* Evolution Chart */}
+                {chartSessions.length >= 2 && (
+                  <div className="p-5 md:p-8 bg-black/30 border border-white/5 rounded-2xl md:rounded-3xl">
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mb-4 flex items-center gap-2">
+                      <Activity size={12} className="text-purple-400" />
+                      {t.deepSessionEvolutionChart}
+                    </h4>
+                    <svg viewBox={`0 0 ${chartW} ${chartH}`} className="w-full h-[150px] md:h-[200px]">
+                      {/* Grid lines */}
+                      {[0.25, 0.5, 0.75].map(f => (
+                        <line key={f} x1="20" y1={chartH - 20 - f * (chartH - 40)} x2={chartW - 20} y2={chartH - 20 - f * (chartH - 40)} stroke="rgba(255,255,255,0.05)" strokeDasharray="4" />
+                      ))}
+                      {/* Area fill */}
+                      {chartPoints.length >= 2 && (
+                        <path d={chartAreaPath} fill="url(#deepGradient)" opacity="0.3" />
+                      )}
+                      {/* Line */}
+                      {chartPoints.length >= 2 && (
+                        <MotionPath
+                          d={chartPath}
+                          fill="none"
+                          stroke="#a855f7"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          initial={{ pathLength: 0 }}
+                          animate={{ pathLength: 1 }}
+                          transition={{ duration: 2, ease: 'easeOut' }}
+                        />
+                      )}
+                      {/* Points */}
+                      {chartPoints.map((p, i) => (
+                        <circle key={i} cx={p.x} cy={p.y} r={p.session.isPerfect ? 5 : p.session.wasExtended ? 4 : 3}
+                          fill={p.session.isPerfect ? '#a855f7' : p.session.isCompleted ? '#10b981' : '#ef4444'}
+                          className="drop-shadow-lg"
+                        />
+                      ))}
+                      <defs>
+                        <linearGradient id="deepGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#a855f7" stopOpacity="0.6" />
+                          <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                  </div>
+                )}
+                
+                {/* Session History Ledger */}
+                <div className="p-5 md:p-8 bg-black/30 border border-white/5 rounded-2xl md:rounded-3xl">
+                  <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mb-4 flex items-center gap-2">
+                    <BookOpen size={12} className="text-purple-400" />
+                    {t.deepSessionHistory}
+                  </h4>
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scroll">
+                    {dsSessions.slice(0, 30).map((session, idx) => (
+                      <div key={session.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-all hover:bg-white/[0.02] ${
+                        session.isPerfect ? 'border-purple-500/20 bg-purple-500/[0.03]' :
+                        session.isCompleted ? 'border-emerald-500/10 bg-emerald-500/[0.02]' :
+                        'border-red-500/10 bg-red-500/[0.02]'
+                      }`}>
+                        {/* Status indicator */}
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${
+                          session.isPerfect ? 'bg-purple-500' :
+                          session.isCompleted ? 'bg-emerald-500' : 'bg-red-500'
+                        }`} />
+                        
+                        {/* Book & Date */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[9px] font-black text-white/70 truncate uppercase tracking-wider">{session.bookTitle}</p>
+                          <p className="text-[7px] font-bold text-white/25">
+                            {new Date(session.endedAt).toLocaleDateString(isRTL ? 'ar-EG' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                        
+                        {/* Duration & Completion */}
+                        <div className="text-right shrink-0">
+                          <p className="text-[9px] font-black text-white/50">
+                            {Math.round(session.actualMinutes)}/{session.targetMinutes}{isRTL ? 'د' : 'm'}
+                          </p>
+                          <p className={`text-[8px] font-black ${
+                            session.completionPercentage >= 100 ? 'text-purple-400' :
+                            session.completionPercentage >= 80 ? 'text-emerald-400' : 'text-red-400'
+                          }`}>
+                            {session.completionPercentage}%
+                          </p>
+                        </div>
+                        
+                        {/* Rewards */}
+                        {session.isCompleted && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <ShieldCheck size={10} className="text-amber-400" />
+                            <span className="text-[8px] font-black text-amber-400">{session.shieldsEarned}</span>
+                            <Star size={10} className="text-amber-400 fill-amber-400" />
+                            <span className="text-[8px] font-black text-amber-400">{session.starsEarned}</span>
+                          </div>
+                        )}
+                        
+                        {/* Extended badge */}
+                        {session.wasExtended && (
+                          <span className="text-[7px] font-black text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded-full shrink-0">
+                            {t.deepSessionExtended}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        );
+      })()}
 
       {/* Wipe Confirmation Overlay */}
       <AnimatePresence>
