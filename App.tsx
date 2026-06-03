@@ -1404,33 +1404,28 @@ const App: React.FC = () => {
         <AnimatePresence>
           {isAddingBook && (
             <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[6000] flex items-center justify-center p-4 bg-black/98 backdrop-blur-3xl">
-              <MotionDiv initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b] border border-white/5 p-8 rounded-[3rem] w-full max-w-lg relative">
-                <button onClick={() => setIsAddingBook(false)} className="absolute top-6 right-6 text-white/20 hover:text-white"><X size={20} /></button>
-                <h2 className="text-2xl font-black mb-8 text-white uppercase italic flex items-center gap-3"><BookOpen size={24} className="text-red-600" /> {t.newIntake}</h2>
-                <div className="space-y-6">
+              <MotionDiv initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b] border border-white/5 p-5 rounded-[2rem] w-full max-w-lg relative max-h-[85vh] overflow-y-auto">
+                <button onClick={() => setIsAddingBook(false)} className="absolute top-4 right-4 text-white/20 hover:text-white z-10"><X size={18} /></button>
+                <h2 className="text-xl font-black mb-4 text-white uppercase italic flex items-center gap-2"><BookOpen size={20} className="text-red-600" /> {t.newIntake}</h2>
+                <div className="space-y-3">
                   {/* ── MANDATORY WARNING BANNER ── */}
-                  <div className="bg-amber-600/10 border border-amber-500/20 rounded-2xl p-4 flex items-start gap-3">
-                    <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-[10px] font-black text-amber-400 uppercase tracking-wider mb-1">
-                        {lang === 'ar' ? 'تنبيه إلزامي' : 'Required Notice'}
-                      </p>
-                      <p className="text-[9px] text-amber-200/60 leading-relaxed font-bold">
-                        {lang === 'ar'
-                          ? 'يجب كتابة اسم الكتاب بدقة مع اسم الكاتب كاملاً. لن يُفتح الكتاب حتى تُكتب هذه المعلومات بشكل صحيح. هذا ضروري لتوثيق سجلك المعرفي.'
-                          : 'You must enter the exact book title and the full author name. The book cannot be opened until this information is provided accurately. This is essential for your reading record.'}
-                      </p>
-                    </div>
+                  <div className="bg-amber-600/10 border border-amber-500/20 rounded-xl p-3 flex items-start gap-2">
+                    <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-[8px] text-amber-200/60 leading-relaxed font-bold">
+                      {lang === 'ar'
+                        ? 'يجب كتابة اسم الكتاب بدقة مع اسم الكاتب كاملاً. لن يُفتح الكتاب حتى تُكتب هذه المعلومات بشكل صحيح.'
+                        : 'You must enter the exact book title and full author name before the book can be opened.'}
+                    </p>
                   </div>
-                  <div onClick={() => !isExtracting && fileInputRef.current?.click()} className="w-full aspect-video border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center justify-center gap-4 bg-white/5 hover:border-red-600/30 transition-all cursor-pointer">
+                  <div onClick={() => !isExtracting && fileInputRef.current?.click()} className="w-full h-24 border-2 border-dashed border-white/10 rounded-2xl flex flex-col items-center justify-center gap-2 bg-white/5 hover:border-red-600/30 transition-all cursor-pointer">
                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".pdf" />
-                    {isExtracting ? <Loader2 size={32} className="animate-spin text-red-600" /> : <><Upload size={24} className="text-white/20" /><span className="text-[10px] uppercase font-black opacity-30 tracking-widest">{pendingFileData ? newBookTitle : t.uploadHint}</span></>}
+                    {isExtracting ? <Loader2 size={24} className="animate-spin text-red-600" /> : <><Upload size={18} className="text-white/20" /><span className="text-[9px] uppercase font-black opacity-30 tracking-widest">{pendingFileData ? newBookTitle : t.uploadHint}</span></>}
                   </div>
-                  <input type="text" value={newBookTitle} onChange={e => setNewBookTitle(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 text-sm font-bold text-white outline-none focus:border-red-600/50" placeholder={t.bookTitle} />
+                  <input type="text" value={newBookTitle} onChange={e => setNewBookTitle(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl p-3.5 text-sm font-bold text-white outline-none focus:border-red-600/50" placeholder={t.bookTitle} />
                   <div className="relative">
-                    <input type="text" value={newBookAuthor} onChange={e => setNewBookAuthor(e.target.value)} className={`w-full bg-white/5 border rounded-2xl p-5 text-sm font-bold text-white outline-none focus:border-red-600/50 ${!newBookAuthor && pendingFileData ? 'border-amber-500/40' : 'border-white/10'}`} placeholder={lang === 'ar' ? 'اسم الكاتب (إلزامي) ✱' : 'Author Name (Required) ✱'} />
+                    <input type="text" value={newBookAuthor} onChange={e => setNewBookAuthor(e.target.value)} className={`w-full bg-white/5 border rounded-xl p-3.5 text-sm font-bold text-white outline-none focus:border-red-600/50 ${!newBookAuthor && pendingFileData ? 'border-amber-500/40' : 'border-white/10'}`} placeholder={lang === 'ar' ? 'اسم الكاتب (إلزامي) ✱' : 'Author Name (Required) ✱'} />
                     {!newBookAuthor && pendingFileData && (
-                      <span className="absolute top-1/2 -translate-y-1/2 right-4 text-[8px] font-black text-amber-400 uppercase">
+                      <span className="absolute top-1/2 -translate-y-1/2 right-3 text-[8px] font-black text-amber-400 uppercase">
                         {lang === 'ar' ? 'إلزامي' : 'Required'}
                       </span>
                     )}
@@ -1447,7 +1442,7 @@ const App: React.FC = () => {
                       }
                       handleAddBook();
                     }}
-                    className={`w-full py-5 rounded-2xl font-black text-xs uppercase tracking-[0.4em] transition-all active:scale-95 ${
+                    className={`w-full py-3.5 rounded-xl font-black text-xs uppercase tracking-[0.3em] transition-all active:scale-95 ${
                       newBookTitle.trim() && newBookAuthor.trim() && pendingFileData
                         ? 'bg-white text-black hover:bg-red-600 hover:text-white cursor-pointer shadow-lg'
                         : 'bg-white/10 text-white/20 cursor-not-allowed'
