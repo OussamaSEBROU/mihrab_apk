@@ -104,14 +104,30 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [isRunning, totalTargetSeconds, sessionCompleted]);
 
-  // ── BACK BUTTON PROTECTION ──
+  // ── BACK BUTTON PROTECTION (beforeunload + system back button) ──
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+
+    // ── Android/Browser system back button interception ──
+    // Push a dummy history state so pressing back doesn't leave the page
+    window.history.pushState({ deepSession: true }, '');
+
+    const handlePopState = (e: PopStateEvent) => {
+      // Re-push state to prevent actual navigation
+      window.history.pushState({ deepSession: true }, '');
+      // Show force-end confirmation
+      setShowForceEndConfirm(true);
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   // ── HANDLE READER'S onBack — show force-end dialog ──
