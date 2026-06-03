@@ -36,10 +36,12 @@ const ANALYTICAL_COLORS = [
 export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBack }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [dsDeleteConfirmId, setDsDeleteConfirmId] = useState<string | null>(null);
+  const [dsDeleteInput, setDsDeleteInput] = useState('');
   const [dsSessionsVersion, setDsSessionsVersion] = useState(0);
   const handleDeleteDeepSession = useCallback((sessionId: string) => {
     deepSessionService.deleteSession(sessionId);
     setDsDeleteConfirmId(null);
+    setDsDeleteInput('');
     setDsSessionsVersion(v => v + 1);
   }, []);
   const t = translations[lang];
@@ -1018,6 +1020,78 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
                   </div>
                 )}
                 
+                {/* Bar Chart — Sessions by Book */}
+                {hasDeepSessions && (() => {
+                  // Group sessions by book
+                  const bookMap = new Map<string, { title: string; count: number; totalMin: number }>();
+                  dsSessions.forEach(s => {
+                    const existing = bookMap.get(s.bookId);
+                    if (existing) {
+                      existing.count++;
+                      existing.totalMin += s.actualMinutes;
+                    } else {
+                      bookMap.set(s.bookId, { title: s.bookTitle, count: s.count || 1, totalMin: s.actualMinutes });
+                    }
+                  });
+                  // Fix: properly initialize count
+                  bookMap.forEach((v, k) => { if (!v.count || v.count < 1) v.count = dsSessions.filter(s => s.bookId === k).length; });
+                  const bookData = Array.from(bookMap.values()).sort((a, b) => b.totalMin - a.totalMin).slice(0, 8);
+                  const maxMin = Math.max(...bookData.map(b => b.totalMin), 1);
+                  const barW = 600;
+                  const barH = 200;
+                  const barGap = 12;
+                  const barCount = bookData.length;
+                  const barWidth = Math.min(60, (barW - 40 - barGap * barCount) / barCount);
+
+                  return (
+                    <div className="p-5 md:p-8 bg-black/30 border border-white/5 rounded-2xl md:rounded-3xl">
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mb-4 flex items-center gap-2">
+                        <BarChart3 size={12} className="text-emerald-400" />
+                        {(t as any).deepSessionBarChartTitle}
+                      </h4>
+                      <svg viewBox={`0 0 ${barW} ${barH}`} className="w-full h-[160px] md:h-[200px]">
+                        {/* Grid lines */}
+                        {[0.25, 0.5, 0.75, 1].map(f => (
+                          <line key={f} x1="20" y1={barH - 30 - f * (barH - 50)} x2={barW - 20} y2={barH - 30 - f * (barH - 50)} stroke="rgba(255,255,255,0.04)" strokeDasharray="4" />
+                        ))}
+                        {/* Bars */}
+                        {bookData.map((b, i) => {
+                          const barHeight = (b.totalMin / maxMin) * (barH - 50);
+                          const x = 30 + i * (barWidth + barGap);
+                          const y = barH - 30 - barHeight;
+                          return (
+                            <g key={i}>
+                              <defs>
+                                <linearGradient id={`barGrad${i}`} x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor={i % 2 === 0 ? '#a855f7' : '#10b981'} stopOpacity="0.9" />
+                                  <stop offset="100%" stopColor={i % 2 === 0 ? '#a855f7' : '#10b981'} stopOpacity="0.3" />
+                                </linearGradient>
+                              </defs>
+                              <rect x={x} y={y} width={barWidth} height={barHeight} rx={4}
+                                fill={`url(#barGrad${i})`} className="drop-shadow-lg" />
+                              {/* Count label */}
+                              <text x={x + barWidth / 2} y={y - 6} textAnchor="middle"
+                                fill="rgba(255,255,255,0.6)" fontSize="10" fontWeight="900">
+                                {b.count}
+                              </text>
+                              {/* Minutes label */}
+                              <text x={x + barWidth / 2} y={y - 18} textAnchor="middle"
+                                fill="rgba(255,255,255,0.25)" fontSize="7" fontWeight="700">
+                                {Math.round(b.totalMin)}{isRTL ? 'د' : 'm'}
+                              </text>
+                              {/* Book title (truncated) */}
+                              <text x={x + barWidth / 2} y={barH - 14} textAnchor="middle"
+                                fill="rgba(255,255,255,0.3)" fontSize="7" fontWeight="700">
+                                {b.title.length > 10 ? b.title.slice(0, 10) + '…' : b.title}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  );
+                })()}
+                
                 {/* Session History Ledger */}
                 <div className="p-5 md:p-8 bg-black/30 border border-white/5 rounded-2xl md:rounded-3xl">
                   <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mb-4 flex items-center gap-2">
@@ -1087,11 +1161,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
                   </div>
                 </div>
 
-                {/* ── Delete Confirmation Modal ── */}
+                {/* ── Delete Confirmation Modal with Text Input ── */}
                 <AnimatePresence>
                   {dsDeleteConfirmId && (() => {
                     const delSession = dsSessions.find(s => s.id === dsDeleteConfirmId);
                     if (!delSession) return null;
+                    const confirmWord = (t as any).deepSessionDeleteTypeWord || (isRTL ? 'حذف' : 'DELETE');
+                    const isConfirmed = dsDeleteInput.trim() === confirmWord;
                     return (
                       <MotionDiv
                         key="ds-delete-modal"
@@ -1104,7 +1180,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
                           initial={{ scale: 0.9, y: 20 }}
                           animate={{ scale: 1, y: 0 }}
                           exit={{ scale: 0.9, y: 20 }}
-                          className="bg-gradient-to-br from-[#1a0808] to-[#0a0a0a] border border-red-500/20 rounded-[2rem] p-6 max-w-xs w-full mx-4 text-center space-y-5 shadow-[0_0_60px_rgba(255,0,0,0.1)]"
+                          className="bg-gradient-to-br from-[#1a0808] to-[#0a0a0a] border border-red-500/20 rounded-[2rem] p-6 max-w-xs w-full mx-4 text-center space-y-4 shadow-[0_0_60px_rgba(255,0,0,0.1)]"
                         >
                           <div className="w-12 h-12 rounded-full bg-red-600/10 flex items-center justify-center mx-auto border border-red-600/20">
                             <Trash2 size={20} className="text-red-400" />
@@ -1118,16 +1194,38 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
                               {Math.round(delSession.actualMinutes)}/{delSession.targetMinutes}{isRTL ? 'د' : 'm'} — {delSession.completionPercentage}%
                             </p>
                           </div>
+
+                          {/* Text confirmation input */}
+                          <div className="space-y-2">
+                            <p className="text-[8px] text-red-400/70 font-bold">
+                              {(t as any).deepSessionDeleteTypePrompt}
+                            </p>
+                            <input
+                              type="text"
+                              value={dsDeleteInput}
+                              onChange={(e) => setDsDeleteInput(e.target.value)}
+                              placeholder={confirmWord}
+                              className="w-full px-4 py-2.5 rounded-xl bg-white/[0.04] border border-red-500/20 text-center text-sm font-black text-white placeholder-white/15 focus:outline-none focus:border-red-500/50 transition-all"
+                              dir={isRTL ? 'rtl' : 'ltr'}
+                              autoFocus
+                            />
+                          </div>
+
                           <div className="flex gap-3">
                             <button
-                              onClick={() => setDsDeleteConfirmId(null)}
+                              onClick={() => { setDsDeleteConfirmId(null); setDsDeleteInput(''); }}
                               className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white/50 font-black text-[9px] uppercase tracking-widest hover:bg-white/10 transition-all"
                             >
                               {isRTL ? 'إلغاء' : 'Cancel'}
                             </button>
                             <button
-                              onClick={() => handleDeleteDeepSession(dsDeleteConfirmId)}
-                              className="flex-1 py-3 rounded-xl bg-red-600 text-white font-black text-[9px] uppercase tracking-widest hover:bg-red-500 transition-all active:scale-95"
+                              onClick={() => isConfirmed && handleDeleteDeepSession(dsDeleteConfirmId)}
+                              disabled={!isConfirmed}
+                              className={`flex-1 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all active:scale-95 ${
+                                isConfirmed
+                                  ? 'bg-red-600 text-white hover:bg-red-500 cursor-pointer'
+                                  : 'bg-red-600/20 text-red-500/30 cursor-not-allowed'
+                              }`}
                             >
                               {(t as any).deepSessionDelete}
                             </button>
