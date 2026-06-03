@@ -238,6 +238,11 @@ export const translations = {
     deepSessionNoSessions: 'No deep reading sessions recorded yet. Start your first session to build your cognitive record.',
     deepSessionMinutes: 'minutes',
     deepSessionHours: 'hours',
+    deepSessionDeleteConfirm: 'Delete this session record permanently?',
+    deepSessionDelete: 'Delete',
+    deepSessionDeleteTypeWord: 'DELETE',
+    deepSessionDeleteTypePrompt: 'Type "DELETE" to confirm permanent deletion',
+    deepSessionBarChartTitle: 'Sessions by Book',
   },
   ar: {
     title: 'المِحْرابْ',
@@ -430,8 +435,8 @@ export const translations = {
     langGatewayEnglish: 'English',
     langGatewayConfirm: 'ادخل المحراب',
     langGatewayNote: 'يمكنك تغيير اللغة في أي وقت من القائمة الجانبية.',
-    // ── جلسة الكتاب — القراءة العميقة ──
-    deepSessionTitle: 'جلسة الكتاب',
+    // ── جلسة مع كتاب — القراءة العميقة ──
+    deepSessionTitle: 'جلسة مع كتاب',
     deepSessionSubtitle: 'الحاضنة المعرفية',
     deepSessionQuote: 'إن نظام الجلسات القرائية المستمرة والمغلقة يُعدّ من أعظم الحواضن المنهجية والطرق التحصيلية لتوطين المعرفة، والانتقال من القراءة العابرة إلى مرحلة البناء الفكري الراسخ.',
     deepSessionNoteEnv: 'اختر وقتك بعناية فائقة في يومك؛ وقت تهاجر فيه من الصخب. احرص على عزل نفسك تماماً عن كل المشتتات والمنبهات الرقمية والبيئية وجهز ذهنك، فالمعرفة تستحق عناء الانقطاع.',
@@ -478,5 +483,10 @@ export const translations = {
     deepSessionNoSessions: 'لا توجد جلسات قراءة عميقة مسجلة بعد. ابدأ جلستك الأولى لبناء سجلك المعرفي.',
     deepSessionMinutes: 'دقيقة',
     deepSessionHours: 'ساعة',
+    deepSessionDeleteConfirm: 'هل تريد حذف سجل هذه الجلسة نهائياً؟',
+    deepSessionDelete: 'حذف',
+    deepSessionDeleteTypeWord: 'حذف',
+    deepSessionDeleteTypePrompt: 'اكتب كلمة "حذف" لتأكيد الحذف النهائي',
+    deepSessionBarChartTitle: 'الجلسات حسب الكتاب',
   }
 };
