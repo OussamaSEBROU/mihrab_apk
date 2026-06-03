@@ -146,6 +146,13 @@ export const deepSessionService = {
     return session;
   },
 
+  /** حذف جلسة بالمعرف */
+  deleteSession: (sessionId: string) => {
+    const sessions = deepSessionService.getSessions().filter(s => s.id !== sessionId);
+    deepSessionService.saveSessions(sessions);
+    return sessions;
+  },
+
   /** جلسات كتاب محدد */
   getSessionsByBook: (bookId: string): DeepSession[] => {
     return deepSessionService.getSessions().filter(s => s.bookId === bookId);
