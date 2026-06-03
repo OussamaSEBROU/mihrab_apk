@@ -486,8 +486,8 @@ const App: React.FC = () => {
     }
   };
   const handleAddBook = async () => {
-    if (!newBookTitle || !newBookAuthor || !pendingFileData) {
-      if (pendingFileData && (!newBookTitle || !newBookAuthor)) {
+    if (!newBookTitle.trim() || !newBookAuthor.trim() || !pendingFileData) {
+      if (pendingFileData && (!newBookTitle.trim() || !newBookAuthor.trim())) {
         alert(lang === 'ar'
           ? '⚠️ يجب كتابة اسم الكتاب واسم الكاتب بدقة قبل الإضافة'
           : '⚠️ You must enter the book title and author name accurately before adding');
@@ -1435,7 +1435,24 @@ const App: React.FC = () => {
                       </span>
                     )}
                   </div>
-                  <button onClick={handleAddBook} disabled={!newBookTitle || !newBookAuthor || !pendingFileData} className="w-full bg-white text-black py-5 rounded-2xl font-black text-xs uppercase tracking-[0.4em] hover:bg-red-600 hover:text-white transition-all disabled:opacity-20 disabled:cursor-not-allowed">{t.save}</button>
+                  <button 
+                    onClick={() => {
+                      if (!newBookTitle.trim() || !newBookAuthor.trim() || !pendingFileData) {
+                        if (pendingFileData) {
+                          alert(lang === 'ar'
+                            ? '⚠️ يجب كتابة اسم الكتاب واسم الكاتب بدقة قبل الإضافة'
+                            : '⚠️ Please enter both book title and author name');
+                        }
+                        return;
+                      }
+                      handleAddBook();
+                    }}
+                    className={`w-full py-5 rounded-2xl font-black text-xs uppercase tracking-[0.4em] transition-all active:scale-95 ${
+                      newBookTitle.trim() && newBookAuthor.trim() && pendingFileData
+                        ? 'bg-white text-black hover:bg-red-600 hover:text-white cursor-pointer shadow-lg'
+                        : 'bg-white/10 text-white/20 cursor-not-allowed'
+                    }`}
+                  >{t.save}</button>
                 </div>
               </MotionDiv>
             </MotionDiv>
