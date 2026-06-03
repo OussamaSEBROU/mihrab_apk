@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Language } from '../types';
 import type { Book, ShelfData } from '../types';
@@ -35,6 +35,13 @@ const ANALYTICAL_COLORS = [
 
 export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBack }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [dsDeleteConfirmId, setDsDeleteConfirmId] = useState<string | null>(null);
+  const [dsSessionsVersion, setDsSessionsVersion] = useState(0);
+  const handleDeleteDeepSession = useCallback((sessionId: string) => {
+    deepSessionService.deleteSession(sessionId);
+    setDsDeleteConfirmId(null);
+    setDsSessionsVersion(v => v + 1);
+  }, []);
   const t = translations[lang];
   const isRTL = lang === 'ar';
 
@@ -885,6 +892,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
 
       {/* ══════════ DEEP READING LOG SECTION ══════════ */}
       {(() => {
+        const _dsVer = dsSessionsVersion; // trigger re-read on delete
         const dsStats = deepSessionService.getStats();
         const dsSessions = deepSessionService.getSessions();
         const hasDeepSessions = dsSessions.length > 0;
@@ -1066,10 +1074,70 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
                             {t.deepSessionExtended}
                           </span>
                         )}
+
+                        {/* Delete button */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDsDeleteConfirmId(session.id); }}
+                          className="shrink-0 w-6 h-6 flex items-center justify-center rounded-lg bg-red-600/5 text-red-500/30 hover:bg-red-600/20 hover:text-red-400 transition-all active:scale-90 border border-transparent hover:border-red-600/15"
+                        >
+                          <Trash2 size={10} />
+                        </button>
                       </div>
                     ))}
                   </div>
                 </div>
+
+                {/* ── Delete Confirmation Modal ── */}
+                <AnimatePresence>
+                  {dsDeleteConfirmId && (() => {
+                    const delSession = dsSessions.find(s => s.id === dsDeleteConfirmId);
+                    if (!delSession) return null;
+                    return (
+                      <MotionDiv
+                        key="ds-delete-modal"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/70 backdrop-blur-lg"
+                      >
+                        <MotionDiv
+                          initial={{ scale: 0.9, y: 20 }}
+                          animate={{ scale: 1, y: 0 }}
+                          exit={{ scale: 0.9, y: 20 }}
+                          className="bg-gradient-to-br from-[#1a0808] to-[#0a0a0a] border border-red-500/20 rounded-[2rem] p-6 max-w-xs w-full mx-4 text-center space-y-5 shadow-[0_0_60px_rgba(255,0,0,0.1)]"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-red-600/10 flex items-center justify-center mx-auto border border-red-600/20">
+                            <Trash2 size={20} className="text-red-400" />
+                          </div>
+                          <p className="text-[10px] text-white/60 uppercase font-bold leading-relaxed">
+                            {(t as any).deepSessionDeleteConfirm}
+                          </p>
+                          <div className="bg-white/[0.03] rounded-xl p-3 border border-white/5 text-left">
+                            <p className="text-[9px] font-black text-white/70 truncate">{delSession.bookTitle}</p>
+                            <p className="text-[7px] text-white/30 mt-1">
+                              {Math.round(delSession.actualMinutes)}/{delSession.targetMinutes}{isRTL ? 'د' : 'm'} — {delSession.completionPercentage}%
+                            </p>
+                          </div>
+                          <div className="flex gap-3">
+                            <button
+                              onClick={() => setDsDeleteConfirmId(null)}
+                              className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 text-white/50 font-black text-[9px] uppercase tracking-widest hover:bg-white/10 transition-all"
+                            >
+                              {isRTL ? 'إلغاء' : 'Cancel'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteDeepSession(dsDeleteConfirmId)}
+                              className="flex-1 py-3 rounded-xl bg-red-600 text-white font-black text-[9px] uppercase tracking-widest hover:bg-red-500 transition-all active:scale-95"
+                            >
+                              {(t as any).deepSessionDelete}
+                            </button>
+                          </div>
+                        </MotionDiv>
+                      </MotionDiv>
+                    );
+                  })()}
+                </AnimatePresence>
+
               </div>
             )}
           </section>
