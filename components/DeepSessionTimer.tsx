@@ -1,365 +1,420 @@
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Capacitor } from '@capacitor/core';
-import { getDB } from './pdfStorage';
-import { storageService } from './storageService';
-import { syncBridge } from './syncBridge';
-import type { DeepSession, DeepSessionStats } from '../types';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import type { Language, Book, DeepSession } from '../types';
+import { translations } from '../i18n/translations';
+import { deepSessionService } from '../services/deepSessionService';
+import Reader from './Reader';
+import {
+  Timer, AlertTriangle, ShieldCheck, Star,
+  Lock, X, ChevronDown, ChevronUp
+} from 'lucide-react';
 
-// ===================================================================
-// DEEP SESSION SERVICE — محرك جلسات القراءة العميقة
-// يتبع نفس بنية storageService: Memory Cache → localStorage → IndexedDB → Filesystem
-// ===================================================================
+const MotionDiv = motion.div as any;
 
-const STORAGE_KEY = 'sanctuary_deep_sessions';
-const SYNC_QUEUE_KEY = 'sanctuary_deep_session_sync_queue';
-
-let _sessionsCache: DeepSession[] | null = null;
-
-// ── IndexedDB Persistence (survives cache clears) ──
-const META_STORE = 'AppData';
-
-const _persistToIDB = async (key: string, value: any): Promise<void> => {
-  try {
-    const db = await getDB();
-    return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(META_STORE, 'readwrite');
-      tx.objectStore(META_STORE).put(JSON.stringify(value), key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) {
-    console.warn('⚠️ Deep Session IDB write failed:', e);
-  }
-};
-
-const _readFromIDB = async <T = any>(key: string): Promise<T | null> => {
-  try {
-    const db = await getDB();
-    return new Promise<T | null>((resolve, reject) => {
-      const tx = db.transaction(META_STORE, 'readonly');
-      const req = tx.objectStore(META_STORE).get(key);
-      req.onsuccess = () => {
-        if (req.result != null) {
-          try { resolve(JSON.parse(req.result)); } catch { resolve(null); }
-        } else { resolve(null); }
-      };
-      req.onerror = () => reject(req.error);
-    });
-  } catch { return null; }
-};
-
-const _persistToFilesystem = (filename: string, data: any): void => {
-  if (Capacitor.isNativePlatform()) {
-    Filesystem.writeFile({
-      path: filename,
-      data: JSON.stringify(data),
-      directory: Directory.Data,
-      encoding: 'utf8' as any
-    }).catch(() => {});
-  }
-};
-
-// ===================================================================
-// REWARDS ENGINE — حساب المكافآت التصاعدية
-// ===================================================================
-
-/**
- * حساب المكافآت بناءً على مدة الجلسة
- * الحد الأدنى (90 دقيقة): 3 دروع + 4 نجوم
- * التصاعد: كل 30 دقيقة إضافية = +1 درع + +1 نجمة
- */
-const calculateRewards = (targetMinutes: number, actualMinutes: number, completionPercentage: number): { shields: number; stars: number } => {
-  // لا مكافآت إذا أقل من 80%
-  if (completionPercentage < 80) {
-    return { shields: 0, stars: 0 };
-  }
-
-  // الحد الأدنى للمكافآت (90 دقيقة = 3 دروع + 4 نجوم)
-  const baseShields = 3;
-  const baseStars = 4;
-
-  // حساب الزيادة التصاعدية بناءً على المدة الأصلية المستهدفة
-  const extraBlocks = Math.max(0, Math.floor((targetMinutes - 90) / 30));
-  const totalShields = baseShields + extraBlocks;
-  const totalStars = baseStars + extraBlocks;
-
-  // إذا لم يكمل 100%، تُمنح نسبة من المكافآت
-  if (completionPercentage < 100) {
-    const factor = completionPercentage / 100;
-    return {
-      shields: Math.max(1, Math.round(totalShields * factor)),
-      stars: Math.max(1, Math.round(totalStars * factor))
-    };
-  }
-
-  return { shields: totalShields, stars: totalStars };
-};
-
-// ===================================================================
-// SERVICE API
-// ===================================================================
-
-export const deepSessionService = {
-
-  /** قراءة الجلسات مع cache */
-  getSessions: (): DeepSession[] => {
-    if (_sessionsCache) return [..._sessionsCache];
-    const data = localStorage.getItem(STORAGE_KEY);
-    _sessionsCache = data ? JSON.parse(data) : [];
-    return [..._sessionsCache!];
-  },
-
-  /** حفظ الجلسات في كل الطبقات */
-  saveSessions: (sessions: DeepSession[]) => {
-    _sessionsCache = sessions;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-    _persistToIDB(STORAGE_KEY, sessions).catch(() => {});
-    _persistToFilesystem('backup_deep_sessions.json', sessions);
-  },
-
-  /** إضافة جلسة جديدة + دمج الدقائق مع الكتاب */
-  addSession: (session: DeepSession) => {
-    const sessions = deepSessionService.getSessions();
-    sessions.unshift(session);
-    deepSessionService.saveSessions(sessions);
-
-    // ── دمج الدقائق مع الكتاب في storageService ──
-    if (session.isCompleted) {
-      const actualSeconds = Math.round(session.actualMinutes * 60);
-      try {
-        const allBooks = storageService.getBooks();
-        const bookIdx = allBooks.findIndex((b: any) => b.id === session.bookId);
-        if (bookIdx >= 0) {
-          allBooks[bookIdx].timeSpentSeconds = (allBooks[bookIdx].timeSpentSeconds || 0) + actualSeconds;
-          allBooks[bookIdx].lastReadAt = Date.now();
-          allBooks[bookIdx].lastReadDate = new Date().toISOString().split('T')[0];
-          storageService.saveBooks(allBooks);
-        }
-      } catch (e) {
-        console.warn('⚠️ Failed to merge deep session time with book:', e);
-      }
-    }
-
-    // ── مزامنة فورية ──
-    deepSessionService.syncSession(session);
-
-    return session;
-  },
-
-  /** حذف جلسة بالمعرف */
-  deleteSession: (sessionId: string) => {
-    const sessions = deepSessionService.getSessions().filter(s => s.id !== sessionId);
-    deepSessionService.saveSessions(sessions);
-    return sessions;
-  },
-
-  /** جلسات كتاب محدد */
-  getSessionsByBook: (bookId: string): DeepSession[] => {
-    return deepSessionService.getSessions().filter(s => s.bookId === bookId);
-  },
-
-  /** إحصائيات تراكمية */
-  getStats: (): DeepSessionStats => {
-    const sessions = deepSessionService.getSessions();
-    const completedSessions = sessions.filter(s => s.isCompleted);
-    const perfectSessions = sessions.filter(s => s.isPerfect);
-
-    const totalMinutes = completedSessions.reduce((acc, s) => acc + s.actualMinutes, 0);
-    const totalShields = completedSessions.reduce((acc, s) => acc + s.shieldsEarned, 0);
-    const totalStars = completedSessions.reduce((acc, s) => acc + s.starsEarned, 0);
-
-    return {
-      totalHours: Math.round((totalMinutes / 60) * 10) / 10,
-      totalSessions: sessions.length,
-      completedSessions: completedSessions.length,
-      perfectSessions: perfectSessions.length,
-      completionRate: sessions.length > 0
-        ? Math.round((completedSessions.length / sessions.length) * 100)
-        : 0,
-      totalShieldsEarned: totalShields,
-      totalStarsEarned: totalStars
-    };
-  },
-
-  /** حساب المكافآت */
-  calculateRewards,
-
-  /** إنشاء جلسة جديدة */
-  createSession: (
-    bookId: string,
-    bookTitle: string,
-    contentHash: string,
-    targetMinutes: number,
-    actualMinutes: number
-  ): DeepSession => {
-    const completionPercentage = Math.min(100, Math.round((actualMinutes / targetMinutes) * 100));
-    const isCompleted = completionPercentage >= 80;
-    const isPerfect = completionPercentage >= 100;
-    const rewards = calculateRewards(targetMinutes, actualMinutes, completionPercentage);
-
-    return {
-      id: `ds_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      bookId,
-      bookTitle,
-      contentHash,
-      targetMinutes,
-      actualMinutes: Math.round(actualMinutes * 10) / 10,
-      completionPercentage,
-      isCompleted,
-      isPerfect,
-      shieldsEarned: rewards.shields,
-      starsEarned: rewards.stars,
-      startedAt: Date.now() - (actualMinutes * 60 * 1000),
-      endedAt: Date.now(),
-      wasExtended: false,
-      extensionCount: 0
-    };
-  },
-
-  // ===================================================================
-  // SYNC — المزامنة السحابية
-  // ===================================================================
-
-  /** رفع جلسة فردية فوراً */
-  syncSession: async (session: DeepSession) => {
-    if (!navigator.onLine) {
-      // حفظ في طابور المزامنة
-      const queue = deepSessionService.getSyncQueue();
-      queue.push(session);
-      deepSessionService.saveSyncQueue(queue);
-      console.log('📴 Deep session queued for sync');
-      return;
-    }
-
-    // مزامنة شاملة مع البيانات المحدثة
-    try {
-      const books = storageService.getBooks();
-      const shelves = storageService.getShelves();
-      await syncBridge.syncFull(books, shelves, `Deep Session: ${session.bookTitle}`);
-      console.log('✅ Deep session synced');
-    } catch (e) {
-      console.warn('⚠️ Deep session sync failed, queued for later');
-      const queue = deepSessionService.getSyncQueue();
-      queue.push(session);
-      deepSessionService.saveSyncQueue(queue);
-    }
-  },
-
-  /** طابور المزامنة المحلي */
-  getSyncQueue: (): DeepSession[] => {
-    try {
-      const data = localStorage.getItem(SYNC_QUEUE_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch { return []; }
-  },
-
-  saveSyncQueue: (queue: DeepSession[]) => {
-    localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(queue.slice(-20)));
-  },
-
-  /** رفع الطابور عند عودة الإنترنت */
-  flushSyncQueue: async () => {
-    const queue = deepSessionService.getSyncQueue();
-    if (queue.length === 0) return;
-
-    try {
-      const books = storageService.getBooks();
-      const shelves = storageService.getShelves();
-      await syncBridge.syncFull(books, shelves, 'Deep Session Queue Flush');
-      localStorage.removeItem(SYNC_QUEUE_KEY);
-      console.log(`✅ Deep session queue flushed (${queue.length} sessions)`);
-    } catch {
-      console.warn('⚠️ Deep session queue flush failed');
-    }
-  },
-
-  /** إعداد البيانات للرفع السحابي (تُدمج مع حمولة syncBridge) */
-  getPayloadData: () => {
-    const stats = deepSessionService.getStats();
-    const sessions = deepSessionService.getSessions();
-    return {
-      totalHours: stats.totalHours,
-      totalSessions: stats.totalSessions,
-      completionRate: stats.completionRate,
-      totalShieldsEarned: stats.totalShieldsEarned,
-      totalStarsEarned: stats.totalStarsEarned,
-      recentSessions: sessions.slice(0, 20).map(s => ({
-        id: s.id,
-        bookId: s.bookId,
-        bookTitle: s.bookTitle,
-        targetMinutes: s.targetMinutes,
-        actualMinutes: s.actualMinutes,
-        completionPercentage: s.completionPercentage,
-        shieldsEarned: s.shieldsEarned,
-        starsEarned: s.starsEarned,
-        startedAt: s.startedAt,
-        endedAt: s.endedAt,
-        wasExtended: s.wasExtended
-      }))
-    };
-  },
-
-  // ===================================================================
-  // RECOVERY — استعادة البيانات
-  // ===================================================================
-  attemptRecovery: async (): Promise<number> => {
-    const current = localStorage.getItem(STORAGE_KEY);
-    if (current) {
-      const parsed = JSON.parse(current);
-      if (Array.isArray(parsed) && parsed.length > 0) return 0;
-    }
-
-    // Layer 1: IndexedDB
-    const idbData = await _readFromIDB<DeepSession[]>(STORAGE_KEY);
-    if (Array.isArray(idbData) && idbData.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(idbData));
-      _sessionsCache = idbData;
-      console.log(`✅ Recovered ${idbData.length} deep sessions from IndexedDB`);
-      return idbData.length;
-    }
-
-    // Layer 2: Filesystem
-    if (Capacitor.isNativePlatform()) {
-      try {
-        const result = await Filesystem.readFile({
-          path: 'backup_deep_sessions.json',
-          directory: Directory.Data,
-          encoding: 'utf8' as any
-        });
-        if (result.data && typeof result.data === 'string') {
-          const recovered: DeepSession[] = JSON.parse(result.data);
-          if (Array.isArray(recovered) && recovered.length > 0) {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(recovered));
-            _sessionsCache = recovered;
-            _persistToIDB(STORAGE_KEY, recovered).catch(() => {});
-            console.log(`✅ Recovered ${recovered.length} deep sessions from filesystem`);
-            return recovered.length;
-          }
-        }
-      } catch { /* non-critical */ }
-    }
-
-    return 0;
-  }
-};
-
-// ── AUTO-FLUSH: رفع الطابور عند عودة الإنترنت ──
-if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => {
-    setTimeout(() => deepSessionService.flushSyncQueue(), 3000);
-  });
-
-  // ── PERIODIC INTEGRITY: مزامنة كل 5 دقائق ──
-  setInterval(() => {
-    try {
-      const data = localStorage.getItem(STORAGE_KEY);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          _persistToIDB(STORAGE_KEY, parsed).catch(() => {});
-          _persistToFilesystem('backup_deep_sessions.json', parsed);
-        }
-      }
-    } catch {}
-  }, 5 * 60 * 1000);
+interface DeepSessionTimerProps {
+  book: Book;
+  targetMinutes: number;
+  lang: Language;
+  onComplete: (session: any) => void;
+  onCancel: () => void;
 }
+
+const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
+  book, targetMinutes, lang, onComplete, onCancel
+}) => {
+  const t = (translations as any)[lang];
+  const isRTL = lang === 'ar';
+  const fontClass = isRTL ? 'font-ar' : 'font-en';
+
+  // ── DEEP SESSION TIMER STATE ──
+  const [totalTargetSeconds, setTotalTargetSeconds] = useState(targetMinutes * 60);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [isRunning, setIsRunning] = useState(true);
+  const [showForceEndConfirm, setShowForceEndConfirm] = useState(false);
+  const [showExtendMenu, setShowExtendMenu] = useState(false);
+  const [extensionCount, setExtensionCount] = useState(0);
+  const [sessionCompleted, setSessionCompleted] = useState(false);
+
+  // ── OVERLAY VISIBILITY: Collapsible + Zen Mode ──
+  const [isExpanded, setIsExpanded] = useState(true);     // expanded bar vs mini pill
+  const [isZenFaded, setIsZenFaded] = useState(false);    // zen mode: faded to 35%
+  const zenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── COMPUTED VALUES ──
+  const remainingSeconds = Math.max(0, totalTargetSeconds - elapsedSeconds);
+  const progressPercent = Math.min(100, (elapsedSeconds / totalTargetSeconds) * 100);
+  const thresholdReached = progressPercent >= 80;
+  const hours = Math.floor(remainingSeconds / 3600);
+  const minutes = Math.floor((remainingSeconds % 3600) / 60);
+  const seconds = remainingSeconds % 60;
+  const formatTime = (h: number, m: number, s: number) =>
+    `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+
+  // ── REWARDS PREVIEW (live) ──
+  const rewardsPreview = useMemo(() => {
+    return deepSessionService.calculateRewards(
+      totalTargetSeconds / 60,
+      elapsedSeconds / 60,
+      progressPercent
+    );
+  }, [totalTargetSeconds, elapsedSeconds, progressPercent]);
+
+  // ── ZEN MODE: Auto-collapse and fade after 40 seconds of no touch ──
+  const resetZenTimer = useCallback(() => {
+    setIsZenFaded(false);
+    if (zenTimeoutRef.current) clearTimeout(zenTimeoutRef.current);
+    zenTimeoutRef.current = setTimeout(() => {
+      setIsExpanded(false);  // collapse to mini pill
+      setIsZenFaded(true);   // fade the pill
+    }, 40000); // 40 seconds
+  }, []);
+
+  useEffect(() => {
+    resetZenTimer();
+    return () => { if (zenTimeoutRef.current) clearTimeout(zenTimeoutRef.current); };
+  }, [resetZenTimer]);
+
+  // Listen for global touch/mouse to reset zen timer
+  useEffect(() => {
+    const handleActivity = () => resetZenTimer();
+    window.addEventListener('touchstart', handleActivity, { passive: true });
+    window.addEventListener('mousemove', handleActivity, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('mousemove', handleActivity);
+    };
+  }, [resetZenTimer]);
+
+  // ── DEEP SESSION COUNTDOWN TIMER ──
+  useEffect(() => {
+    if (isRunning && !sessionCompleted) {
+      intervalRef.current = setInterval(() => {
+        setElapsedSeconds(prev => {
+          const next = prev + 1;
+          if (next >= totalTargetSeconds) {
+            setSessionCompleted(true);
+            setIsRunning(false);
+          }
+          return next;
+        });
+      }, 1000);
+    }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [isRunning, totalTargetSeconds, sessionCompleted]);
+
+  // ── BACK BUTTON PROTECTION ──
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  // ── HANDLE READER'S onBack — show force-end dialog ──
+  const handleReaderBack = useCallback(() => {
+    setShowForceEndConfirm(true);
+  }, []);
+
+  const handleStatsUpdate = useCallback((_starReached?: number | null) => {}, []);
+
+  // ── COMPLETE SESSION ──
+  const handleComplete = useCallback((forceEnd: boolean = false) => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (zenTimeoutRef.current) clearTimeout(zenTimeoutRef.current);
+    setIsRunning(false);
+
+    const actualMinutes = elapsedSeconds / 60;
+    const session = deepSessionService.createSession(
+      book.id, book.title, book.contentHash || '',
+      totalTargetSeconds / 60, actualMinutes
+    );
+    session.wasExtended = extensionCount > 0;
+    session.extensionCount = extensionCount;
+    onComplete(session);
+  }, [elapsedSeconds, totalTargetSeconds, book, extensionCount, onComplete]);
+
+  const handleForceEnd = useCallback(() => {
+    setShowForceEndConfirm(false);
+    handleComplete(true);
+  }, [handleComplete]);
+
+  const handleExtend = useCallback((extraMinutes: number) => {
+    setTotalTargetSeconds(prev => prev + extraMinutes * 60);
+    setExtensionCount(prev => prev + 1);
+    setSessionCompleted(false);
+    setIsRunning(true);
+    setShowExtendMenu(false);
+  }, []);
+
+  // Toggle overlay expand/collapse
+  const toggleOverlay = useCallback(() => {
+    setIsExpanded(prev => !prev);
+    resetZenTimer();
+  }, [resetZenTimer]);
+
+  // ═══════════════════════════════════════════════════════════
+  // SESSION COMPLETED — timer reached 0
+  // ═══════════════════════════════════════════════════════════
+  if (sessionCompleted) {
+    return (
+      <MotionDiv
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className={`fixed inset-0 z-[15000] bg-black flex items-center justify-center ${fontClass}`}
+      >
+        {/* Ambient glow */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <MotionDiv
+            animate={{ scale: [1, 1.5, 1], opacity: [0.05, 0.15, 0.05] }}
+            transition={{ duration: 4, repeat: Infinity }}
+            className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[80vw] h-[80vw] rounded-full bg-emerald-600/20 blur-[100px]"
+          />
+        </div>
+
+        <div className="relative text-center px-8 max-w-md space-y-8">
+          <MotionDiv
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: 'spring', damping: 15 }}
+            className="w-24 h-24 rounded-full bg-emerald-600/20 border-2 border-emerald-500/40 flex items-center justify-center mx-auto shadow-[0_0_60px_rgba(16,185,129,0.3)]"
+          >
+            <ShieldCheck size={40} className="text-emerald-400" />
+          </MotionDiv>
+
+          <h2 className="text-2xl font-black text-white uppercase tracking-tighter italic">
+            {t.deepSessionCompleteTitle}
+          </h2>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-4 bg-white/5 rounded-2xl border border-white/10 text-center">
+              <ShieldCheck size={20} className="text-amber-400 mx-auto mb-2" />
+              <p className="text-2xl font-black text-white">{rewardsPreview.shields}</p>
+              <p className="text-[8px] font-black uppercase text-white/40 tracking-widest">{t.deepSessionShieldsEarned}</p>
+            </div>
+            <div className="p-4 bg-white/5 rounded-2xl border border-white/10 text-center">
+              <Star size={20} className="text-amber-400 fill-amber-400 mx-auto mb-2" />
+              <p className="text-2xl font-black text-white">{rewardsPreview.stars}</p>
+              <p className="text-[8px] font-black uppercase text-white/40 tracking-widest">{t.deepSessionStarsEarned}</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-white/50 uppercase font-bold">
+            {isRTL
+              ? `${Math.round(elapsedSeconds / 60)} دقيقة من أصل ${Math.round(totalTargetSeconds / 60)} دقيقة (100%)`
+              : `${Math.round(elapsedSeconds / 60)} of ${Math.round(totalTargetSeconds / 60)} minutes (100%)`}
+          </p>
+
+          <div className="space-y-3">
+            <button onClick={() => handleComplete(false)}
+              className="w-full py-4 rounded-2xl bg-emerald-600 text-white font-black text-xs uppercase tracking-[0.3em] shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:bg-emerald-500 active:scale-95 transition-all"
+            >{t.deepSessionReturn}</button>
+            <button onClick={() => setShowExtendMenu(true)}
+              className="w-full py-4 rounded-2xl bg-white/5 border border-white/10 text-white/60 font-black text-xs uppercase tracking-widest hover:text-white hover:border-red-600/30 transition-all"
+            >{t.deepSessionExtend}</button>
+          </div>
+        </div>
+
+        {/* Extend Menu */}
+        <AnimatePresence>
+          {showExtendMenu && (
+            <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[16000] flex items-center justify-center bg-black/80 backdrop-blur-md">
+              <MotionDiv initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
+                className="bg-[#0a0f0a] border border-white/10 rounded-[2rem] p-8 max-w-sm w-full mx-4 space-y-4">
+                <h3 className="text-lg font-black text-white uppercase tracking-tight text-center">{t.deepSessionExtend}</h3>
+                <p className="text-[10px] text-white/40 text-center uppercase font-bold">{t.deepSessionExtendMsg}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[90, 120, 150, 180, 210, 240, 270, 300, 330, 360].map(min => (
+                    <button key={min} onClick={() => handleExtend(min)}
+                      className="px-3 py-3 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-white/70 hover:bg-red-600/20 hover:border-red-600/30 transition-all"
+                    >{min}{isRTL ? ' د' : 'm'} ({(min / 60).toFixed(1)}{isRTL ? ' س' : 'h'})</button>
+                  ))}
+                </div>
+                <button onClick={() => setShowExtendMenu(false)}
+                  className="w-full py-3 rounded-xl bg-transparent text-white/30 font-black text-[10px] uppercase tracking-widest hover:text-white/60 transition-all"
+                >{t.deepSessionCancel}</button>
+              </MotionDiv>
+            </MotionDiv>
+          )}
+        </AnimatePresence>
+      </MotionDiv>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // MAIN RENDER — Reader + Deep Session Overlay
+  // ═══════════════════════════════════════════════════════════
+  return (
+    <div className={`fixed inset-0 z-[15000] bg-black ${fontClass}`}>
+      {/* THE REAL READER — all original features intact */}
+      <Reader
+        key={book.id}
+        book={book}
+        lang={lang}
+        onBack={handleReaderBack}
+        onStatsUpdate={handleStatsUpdate}
+      />
+
+      {/* ──────────────────────────────────────────────── */}
+      {/* DEEP SESSION OVERLAY — Collapsible + Zen Mode   */}
+      {/* ──────────────────────────────────────────────── */}
+
+      <AnimatePresence mode="wait">
+        {isExpanded ? (
+          /* ═══ EXPANDED BAR — full timer, positioned ABOVE Reader's bottom controls ═══ */
+          <MotionDiv
+            key="expanded-bar"
+            initial={{ y: 30, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 20, opacity: 0 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className="fixed left-0 right-0 z-[16000] pointer-events-none"
+            style={{ bottom: '110px', direction: 'ltr' }}
+          >
+            <div className="pointer-events-auto mx-3">
+              <div className="bg-black/85 backdrop-blur-2xl border border-white/[0.08] rounded-2xl overflow-hidden shadow-[0_-4px_40px_rgba(0,0,0,0.8)]">
+                {/* Main Timer Row */}
+                <div className="px-4 py-2.5 flex items-center gap-3">
+                  {/* Lock + Countdown */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className={`w-5 h-5 rounded-md flex items-center justify-center ${
+                      thresholdReached ? 'bg-emerald-600/20' : 'bg-red-600/20'
+                    }`}>
+                      <Lock size={9} className={thresholdReached ? 'text-emerald-500' : 'text-red-500'} />
+                    </div>
+                    <span className={`text-sm font-black tracking-[0.12em] leading-none ${
+                      thresholdReached ? 'text-emerald-400' : 'text-white'
+                    }`} style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                      {formatTime(hours, minutes, seconds)}
+                    </span>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="flex-1 relative">
+                    <div className="w-full h-1 bg-white/[0.06] rounded-full overflow-hidden">
+                      <MotionDiv
+                        animate={{ width: `${progressPercent}%` }}
+                        transition={{ duration: 0.8, ease: 'easeOut' }}
+                        className={`h-full rounded-full ${
+                          thresholdReached
+                            ? 'bg-gradient-to-r from-emerald-600 to-emerald-400'
+                            : 'bg-gradient-to-r from-red-600/80 to-red-400'
+                        }`}
+                      />
+                    </div>
+                    {/* 80% Threshold Marker */}
+                    <div className="absolute top-1/2 -translate-y-1/2 w-0.5 h-2.5 rounded-full"
+                      style={{ left: '80%', backgroundColor: thresholdReached ? 'rgba(16,185,129,0.5)' : 'rgba(251,191,36,0.3)' }}
+                    />
+                  </div>
+
+                  {/* Rewards */}
+                  <div className="flex items-center gap-1 shrink-0 bg-white/[0.04] px-2 py-1 rounded-lg">
+                    <ShieldCheck size={9} className="text-amber-400/80" />
+                    <span className="text-[8px] font-black text-amber-400/80">{rewardsPreview.shields}</span>
+                    <Star size={8} className="text-amber-400/80 fill-amber-400/80" />
+                    <span className="text-[8px] font-black text-amber-400/80">{rewardsPreview.stars}</span>
+                  </div>
+
+                  {/* Force End */}
+                  <button onClick={() => setShowForceEndConfirm(true)}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded-lg bg-red-600/10 border border-red-600/15 text-red-500/70 hover:bg-red-600/30 hover:text-red-400 transition-all active:scale-90"
+                  ><X size={10} /></button>
+
+                  {/* Collapse Chevron */}
+                  <button onClick={toggleOverlay}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center rounded-lg bg-white/[0.04] text-white/30 hover:text-white/60 transition-all active:scale-90"
+                  ><ChevronDown size={12} /></button>
+                </div>
+
+                {/* Bottom info */}
+                <div className="px-4 pb-2 flex justify-between items-center">
+                  <span className="text-[7px] font-black uppercase tracking-widest text-white/15">
+                    {Math.round(progressPercent)}%
+                  </span>
+                  <span className={`text-[7px] font-black uppercase tracking-wider ${
+                    thresholdReached ? 'text-emerald-500/50' : 'text-amber-500/30'
+                  }`}>
+                    {thresholdReached ? t.deepSessionThresholdReached : t.deepSessionThreshold}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </MotionDiv>
+        ) : (
+          /* ═══ COLLAPSED MINI PILL — small red timer badge ═══ */
+          <MotionDiv
+            key="mini-pill"
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: isZenFaded ? 0.35 : 1 }}
+            exit={{ scale: 0.8, opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="fixed z-[16000] pointer-events-none"
+            style={{ bottom: '110px', right: '12px', direction: 'ltr' }}
+          >
+            <button
+              onClick={toggleOverlay}
+              className="pointer-events-auto flex items-center gap-1.5 px-3 py-2 rounded-full bg-red-600/90 backdrop-blur-xl border border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.3)] hover:bg-red-600 transition-all active:scale-95"
+            >
+              <Lock size={8} className="text-white/80" />
+              <span className="text-[10px] font-black text-white tracking-wider" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                {formatTime(hours, minutes, seconds)}
+              </span>
+              <ChevronUp size={10} className="text-white/50" />
+            </button>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
+
+      {/* ──────────────────────────────────────────────── */}
+      {/* FORCE END CONFIRMATION MODAL                    */}
+      {/* ──────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showForceEndConfirm && (
+          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[17000] flex items-center justify-center bg-black/80 backdrop-blur-lg">
+            <MotionDiv initial={{ scale: 0.85, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.85, y: 20 }}
+              className="bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0a] border border-red-500/20 rounded-[2rem] p-8 max-w-sm w-full mx-4 text-center space-y-6 shadow-[0_0_80px_rgba(255,0,0,0.1)]">
+              <div className="w-16 h-16 rounded-full bg-red-600/10 flex items-center justify-center mx-auto border border-red-600/20">
+                <AlertTriangle size={28} className="text-red-400" />
+              </div>
+              <h3 className="text-lg font-black text-white uppercase tracking-tight">{t.deepSessionForceEnd}</h3>
+              <p className="text-[10px] text-white/50 leading-relaxed uppercase font-bold">{t.deepSessionForceEndConfirm}</p>
+
+              {/* Current Progress */}
+              <div className="bg-white/[0.03] rounded-xl p-4 border border-white/5">
+                <p className="text-xs font-black text-white/70 mb-1">{isRTL ? 'التقدم الحالي' : 'Current Progress'}</p>
+                <p className={`text-2xl font-black ${progressPercent >= 80 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {Math.round(progressPercent)}%
+                </p>
+                <p className="text-[8px] text-white/30 mt-1 uppercase font-bold">
+                  {Math.round(elapsedSeconds / 60)}/{Math.round(totalTargetSeconds / 60)} {isRTL ? 'دقيقة' : 'minutes'}
+                </p>
+                {progressPercent < 80 && (
+                  <p className="text-[8px] text-red-400/80 mt-2 font-bold">
+                    {isRTL ? '⚠️ لم تبلغ عتبة الـ 80% — لن تُحتسب المكافآت' : '⚠️ Below 80% threshold — no rewards'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                <button onClick={() => setShowForceEndConfirm(false)}
+                  className="flex-1 py-4 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600/40 transition-all active:scale-95"
+                >{t.deepSessionForceEndNo}</button>
+                <button onClick={handleForceEnd}
+                  className="flex-1 py-4 rounded-xl bg-red-600 text-white font-black text-[10px] uppercase tracking-widest hover:bg-red-500 transition-all active:scale-95"
+                >{t.deepSessionForceEndYes}</button>
+              </div>
+            </MotionDiv>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+export default DeepSessionTimer;
