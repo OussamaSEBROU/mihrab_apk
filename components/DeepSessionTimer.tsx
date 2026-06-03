@@ -6,7 +6,7 @@ import { deepSessionService } from '../services/deepSessionService';
 import Reader from './Reader';
 import {
   Timer, AlertTriangle, ShieldCheck, Star,
-  ChevronUp, ChevronDown, Lock, Sparkles, X
+  Lock, X
 } from 'lucide-react';
 
 const MotionDiv = motion.div as any;
@@ -26,7 +26,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
 
-  // ── DEEP SESSION TIMER STATE (independent of Reader's own timer) ──
+  // ── DEEP SESSION TIMER STATE ──
   const [totalTargetSeconds, setTotalTargetSeconds] = useState(targetMinutes * 60);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isRunning, setIsRunning] = useState(true);
@@ -34,9 +34,12 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
   const [showExtendMenu, setShowExtendMenu] = useState(false);
   const [extensionCount, setExtensionCount] = useState(0);
   const [sessionCompleted, setSessionCompleted] = useState(false);
-  const [isTimerBarCollapsed, setIsTimerBarCollapsed] = useState(false);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  // ── ZEN MODE: Auto-hide overlay after 40 seconds ──
+  const [isOverlayVisible, setIsOverlayVisible] = useState(true);
+  const zenTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── COMPUTED VALUES ──
   const remainingSeconds = Math.max(0, totalTargetSeconds - elapsedSeconds);
@@ -56,6 +59,34 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
       progressPercent
     );
   }, [totalTargetSeconds, elapsedSeconds, progressPercent]);
+
+  // ── ZEN MODE: Reset timer on any touch/interaction ──
+  const resetZenTimer = useCallback(() => {
+    setIsOverlayVisible(true);
+    if (zenTimeoutRef.current) clearTimeout(zenTimeoutRef.current);
+    zenTimeoutRef.current = setTimeout(() => {
+      setIsOverlayVisible(false);
+    }, 40000); // 40 seconds
+  }, []);
+
+  // Start zen timer on mount
+  useEffect(() => {
+    resetZenTimer();
+    return () => {
+      if (zenTimeoutRef.current) clearTimeout(zenTimeoutRef.current);
+    };
+  }, [resetZenTimer]);
+
+  // Listen for global touch/mouse events to reset zen timer
+  useEffect(() => {
+    const handleActivity = () => resetZenTimer();
+    window.addEventListener('touchstart', handleActivity, { passive: true });
+    window.addEventListener('mousemove', handleActivity, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('mousemove', handleActivity);
+    };
+  }, [resetZenTimer]);
 
   // ── DEEP SESSION COUNTDOWN TIMER ──
   useEffect(() => {
@@ -86,19 +117,20 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // ── HANDLE READER'S onBack — intercept to show force-end confirmation ──
+  // ── HANDLE READER'S onBack — show force-end dialog ──
   const handleReaderBack = useCallback(() => {
     setShowForceEndConfirm(true);
   }, []);
 
-  // ── HANDLE READER'S onStatsUpdate — pass through normally ──
-  const handleStatsUpdate = useCallback((starReached?: number | null) => {
-    // Reader handles its own book stats; we don't interfere
+  // ── HANDLE READER'S onStatsUpdate — pass through ──
+  const handleStatsUpdate = useCallback((_starReached?: number | null) => {
+    // Reader handles its own book stats
   }, []);
 
-  // ── COMPLETE SESSION (called on natural end or force end) ──
+  // ── COMPLETE SESSION ──
   const handleComplete = useCallback((forceEnd: boolean = false) => {
     if (intervalRef.current) clearInterval(intervalRef.current);
+    if (zenTimeoutRef.current) clearTimeout(zenTimeoutRef.current);
     setIsRunning(false);
 
     const actualMinutes = elapsedSeconds / 60;
@@ -131,7 +163,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
   }, []);
 
   // ═══════════════════════════════════════════════════════════
-  // SESSION COMPLETED OVERLAY — shown when timer reaches 0
+  // SESSION COMPLETED — timer reached 0
   // ═══════════════════════════════════════════════════════════
   if (sessionCompleted) {
     return (
@@ -140,9 +172,10 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
         animate={{ opacity: 1 }}
         className={`fixed inset-0 z-[15000] bg-black flex items-center justify-center ${fontClass}`}
       >
+        {/* Ambient glow */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <MotionDiv
-            animate={{ scale: [1, 1.5, 1], opacity: [0.05, 0.2, 0.05] }}
+            animate={{ scale: [1, 1.5, 1], opacity: [0.05, 0.15, 0.05] }}
             transition={{ duration: 4, repeat: Infinity }}
             className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[80vw] h-[80vw] rounded-full bg-emerald-600/20 blur-[100px]"
           />
@@ -244,7 +277,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
   }
 
   // ═══════════════════════════════════════════════════════════
-  // MAIN RENDER — Reader (full features) + Deep Session Overlay
+  // MAIN RENDER — Reader (full features) + Deep Session Bottom Overlay
   // ═══════════════════════════════════════════════════════════
   return (
     <div className={`fixed inset-0 z-[15000] bg-black ${fontClass}`}>
@@ -260,112 +293,96 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
       />
 
       {/* ────────────────────────────────────────────────────── */}
-      {/* DEEP SESSION FLOATING OVERLAY — Timer Bar on top      */}
+      {/* DEEP SESSION BOTTOM OVERLAY — Zen Mode Auto-hide      */}
+      {/* Positioned to sit over Reader's bottom controls area  */}
       {/* ────────────────────────────────────────────────────── */}
       <MotionDiv
-        initial={{ y: -60 }}
-        animate={{ y: 0 }}
-        className="fixed top-0 left-0 right-0 z-[16000] pointer-events-none"
+        initial={{ y: 30, opacity: 0 }}
+        animate={{
+          y: 0,
+          opacity: isOverlayVisible ? 1 : 0.35,
+        }}
+        transition={{ duration: 0.5, ease: 'easeInOut' }}
+        className="fixed bottom-0 left-0 right-0 z-[16000] pointer-events-none"
+        style={{ direction: 'ltr' }}
       >
-        {/* Collapsed Mini Bar */}
-        {isTimerBarCollapsed ? (
-          <div className="pointer-events-auto flex justify-center pt-1">
-            <button
-              onClick={() => setIsTimerBarCollapsed(false)}
-              className="flex items-center gap-2 px-4 py-1.5 bg-black/80 backdrop-blur-xl rounded-b-xl border border-white/10 border-t-0 shadow-2xl"
-            >
-              <Lock size={10} className="text-red-600" />
-              <span className="text-[9px] font-black text-white tracking-[0.15em]" style={{ fontFamily: 'monospace' }}>
-                {formatTime(hours, minutes, seconds)}
-              </span>
-              {/* Mini progress dot */}
-              <div className={`w-1.5 h-1.5 rounded-full ${thresholdReached ? 'bg-emerald-500' : 'bg-red-600'} animate-pulse`} />
-              <ChevronDown size={10} className="text-white/30" />
-            </button>
-          </div>
-        ) : (
-          /* Expanded Timer Bar */
-          <div className="pointer-events-auto mx-3 mt-14 md:mt-16">
-            <MotionDiv
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-black/85 backdrop-blur-2xl border border-white/10 rounded-2xl p-3 shadow-[0_8px_32px_rgba(0,0,0,0.8)]"
-            >
-              {/* Row 1: Lock icon + Countdown + Rewards + Collapse */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-red-600/20 flex items-center justify-center">
-                    <Lock size={10} className="text-red-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-white tracking-[0.15em] leading-none" style={{ fontFamily: 'monospace' }}>
-                      {formatTime(hours, minutes, seconds)}
-                    </p>
-                    <p className="text-[6px] font-black uppercase tracking-widest text-white/25 mt-0.5">
-                      {t.deepSessionCountdown}
-                    </p>
-                  </div>
+        <div className="pointer-events-auto mx-2 mb-2">
+          <MotionDiv
+            layout
+            className="bg-black/80 backdrop-blur-2xl border border-white/[0.08] rounded-2xl overflow-hidden shadow-[0_-4px_30px_rgba(0,0,0,0.7)]"
+          >
+            {/* ── Main Timer Row ── */}
+            <div className="px-4 py-2.5 flex items-center gap-3">
+              {/* Lock + Countdown */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className={`w-5 h-5 rounded-md flex items-center justify-center ${
+                  thresholdReached ? 'bg-emerald-600/20' : 'bg-red-600/20'
+                }`}>
+                  <Lock size={9} className={thresholdReached ? 'text-emerald-500' : 'text-red-500'} />
                 </div>
-
-                <div className="flex items-center gap-2">
-                  {/* Live Rewards */}
-                  <div className="flex items-center gap-1.5 bg-white/5 px-2 py-1 rounded-full">
-                    <ShieldCheck size={9} className="text-amber-400" />
-                    <span className="text-[8px] font-black text-amber-400">{rewardsPreview.shields}</span>
-                    <div className="w-px h-2 bg-white/10" />
-                    <Star size={9} className="text-amber-400 fill-amber-400" />
-                    <span className="text-[8px] font-black text-amber-400">{rewardsPreview.stars}</span>
-                  </div>
-
-                  {/* Collapse button */}
-                  <button
-                    onClick={() => setIsTimerBarCollapsed(true)}
-                    className="w-6 h-6 flex items-center justify-center rounded-full bg-white/5 text-white/30 hover:text-white transition-all"
-                  >
-                    <ChevronUp size={12} />
-                  </button>
-                </div>
+                <span
+                  className={`text-sm font-black tracking-[0.12em] leading-none ${
+                    thresholdReached ? 'text-emerald-400' : 'text-white'
+                  }`}
+                  style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+                >
+                  {formatTime(hours, minutes, seconds)}
+                </span>
               </div>
 
-              {/* Row 2: Progress Bar with 80% threshold */}
-              <div className="relative">
-                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+              {/* Progress Bar */}
+              <div className="flex-1 relative">
+                <div className="w-full h-1 bg-white/[0.06] rounded-full overflow-hidden">
                   <MotionDiv
                     animate={{ width: `${progressPercent}%` }}
-                    transition={{ duration: 0.5 }}
-                    className={`h-full rounded-full transition-colors duration-500 ${
+                    transition={{ duration: 0.8, ease: 'easeOut' }}
+                    className={`h-full rounded-full ${
                       thresholdReached
-                        ? 'bg-gradient-to-r from-emerald-600 to-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
-                        : 'bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_8px_rgba(255,0,0,0.5)]'
+                        ? 'bg-gradient-to-r from-emerald-600 to-emerald-400'
+                        : 'bg-gradient-to-r from-red-600/80 to-red-400'
                     }`}
                   />
                 </div>
                 {/* 80% Threshold Marker */}
-                <div className="absolute top-0 bottom-0 flex items-center" style={{ left: '80%' }}>
-                  <div className={`w-px h-full ${thresholdReached ? 'bg-emerald-500' : 'bg-amber-500/50'}`} />
-                </div>
-                <div className="flex justify-between mt-1">
-                  <span className="text-[6px] font-black uppercase text-white/20">
-                    {Math.round(progressPercent)}%
-                  </span>
-                  <span className={`text-[6px] font-black uppercase tracking-wider ${thresholdReached ? 'text-emerald-500' : 'text-amber-500/50'}`}>
-                    {thresholdReached ? t.deepSessionThresholdReached : t.deepSessionThreshold}
-                  </span>
-                </div>
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 w-0.5 h-2.5 rounded-full"
+                  style={{
+                    left: '80%',
+                    backgroundColor: thresholdReached ? 'rgba(16,185,129,0.5)' : 'rgba(251,191,36,0.3)'
+                  }}
+                />
               </div>
 
-              {/* Row 3: Force End Button (small, bottom-right) */}
-              <div className="flex justify-end mt-1">
-                <button
-                  onClick={() => setShowForceEndConfirm(true)}
-                  className="px-3 py-1 rounded-lg bg-red-600/10 border border-red-600/15 text-red-500 text-[7px] font-black uppercase tracking-wider hover:bg-red-600/30 transition-all active:scale-95"
-                >
-                  {t.deepSessionForceEnd}
-                </button>
+              {/* Rewards Preview */}
+              <div className="flex items-center gap-1 shrink-0 bg-white/[0.04] px-2 py-1 rounded-lg">
+                <ShieldCheck size={9} className="text-amber-400/80" />
+                <span className="text-[8px] font-black text-amber-400/80">{rewardsPreview.shields}</span>
+                <Star size={8} className="text-amber-400/80 fill-amber-400/80" />
+                <span className="text-[8px] font-black text-amber-400/80">{rewardsPreview.stars}</span>
               </div>
-            </MotionDiv>
-          </div>
-        )}
+
+              {/* Force End Button */}
+              <button
+                onClick={() => setShowForceEndConfirm(true)}
+                className="shrink-0 w-6 h-6 flex items-center justify-center rounded-lg bg-red-600/10 border border-red-600/15 text-red-500/70 hover:bg-red-600/30 hover:text-red-400 transition-all active:scale-90"
+              >
+                <X size={10} />
+              </button>
+            </div>
+
+            {/* ── Percentage + Threshold Label ── */}
+            <div className="px-4 pb-2 flex justify-between items-center">
+              <span className="text-[7px] font-black uppercase tracking-widest text-white/15">
+                {Math.round(progressPercent)}%
+              </span>
+              <span className={`text-[7px] font-black uppercase tracking-wider ${
+                thresholdReached ? 'text-emerald-500/50' : 'text-amber-500/30'
+              }`}>
+                {thresholdReached ? t.deepSessionThresholdReached : t.deepSessionThreshold}
+              </span>
+            </div>
+          </MotionDiv>
+        </div>
       </MotionDiv>
 
       {/* ────────────────────────────────────────────────────── */}
@@ -380,27 +397,47 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
             className="fixed inset-0 z-[17000] flex items-center justify-center bg-black/80 backdrop-blur-lg"
           >
             <MotionDiv
-              initial={{ scale: 0.85 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.85 }}
-              className="bg-gradient-to-br from-red-900/40 to-black border border-red-500/30 rounded-[2rem] p-8 max-w-sm w-full mx-4 text-center space-y-6"
+              initial={{ scale: 0.85, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.85, y: 20 }}
+              className="bg-gradient-to-br from-[#1a0a0a] to-[#0a0a0a] border border-red-500/20 rounded-[2rem] p-8 max-w-sm w-full mx-4 text-center space-y-6 shadow-[0_0_80px_rgba(255,0,0,0.1)]"
             >
               <div className="w-16 h-16 rounded-full bg-red-600/10 flex items-center justify-center mx-auto border border-red-600/20">
                 <AlertTriangle size={28} className="text-red-400" />
               </div>
+
               <h3 className="text-lg font-black text-white uppercase tracking-tight">
                 {t.deepSessionForceEnd}
               </h3>
+
               <p className="text-[10px] text-white/50 leading-relaxed uppercase font-bold">
                 {t.deepSessionForceEndConfirm}
               </p>
-              <p className="text-xs font-black text-white/70">
-                {isRTL ? `التقدم الحالي: ${Math.round(progressPercent)}%` : `Current progress: ${Math.round(progressPercent)}%`}
-              </p>
+
+              {/* Current Progress Info */}
+              <div className="bg-white/[0.03] rounded-xl p-4 border border-white/5">
+                <p className="text-xs font-black text-white/70 mb-1">
+                  {isRTL ? 'التقدم الحالي' : 'Current Progress'}
+                </p>
+                <p className={`text-2xl font-black ${
+                  progressPercent >= 80 ? 'text-emerald-400' : 'text-red-400'
+                }`}>
+                  {Math.round(progressPercent)}%
+                </p>
+                <p className="text-[8px] text-white/30 mt-1 uppercase font-bold">
+                  {Math.round(elapsedSeconds / 60)}/{Math.round(totalTargetSeconds / 60)} {isRTL ? 'دقيقة' : 'minutes'}
+                </p>
+                {progressPercent < 80 && (
+                  <p className="text-[8px] text-red-400/80 mt-2 font-bold">
+                    {isRTL ? '⚠️ لم تبلغ عتبة الـ 80% — لن تُحتسب المكافآت' : '⚠️ Below 80% threshold — no rewards will be earned'}
+                  </p>
+                )}
+              </div>
+
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowForceEndConfirm(false)}
-                  className="flex-1 py-4 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600/40 transition-all"
+                  className="flex-1 py-4 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600/40 transition-all active:scale-95"
                 >
                   {t.deepSessionForceEndNo}
                 </button>
