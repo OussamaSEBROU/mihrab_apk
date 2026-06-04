@@ -125,18 +125,11 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     };
     window.addEventListener('popstate', handlePopState);
 
-    // 3. Capacitor Android hardware back button (◀)
-    let capListenerHandle: any = null;
-    try {
-      CapApp.addListener('backButton', ({ canGoBack }) => {
-        // Block ALL back navigation during deep session
-        setShowForceEndConfirm(true);
-      }).then(handle => {
-        capListenerHandle = handle;
-      });
-    } catch {
-      // Not in Capacitor — browser-only fallback active
-    }
+    // 3. Capacitor Android hardware back button (via mobileService.ts event)
+    const handleDeepSessionBackPress = () => {
+      setShowForceEndConfirm(true);
+    };
+    window.addEventListener('deepSessionBackPress', handleDeepSessionBackPress);
 
     // 4. Visibility change — detect home/recent apps button
     let wentToBackground = false;
@@ -154,7 +147,7 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('popstate', handlePopState);
       document.removeEventListener('visibilitychange', handleVisibility);
-      if (capListenerHandle?.remove) capListenerHandle.remove();
+      window.removeEventListener('deepSessionBackPress', handleDeepSessionBackPress);
     };
   }, []);
 
