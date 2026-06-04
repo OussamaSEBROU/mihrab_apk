@@ -104,29 +104,54 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [isRunning, totalTargetSeconds, sessionCompleted]);
 
-  // ── BACK BUTTON PROTECTION (beforeunload + system back button) ──
+  // ── BACK BUTTON PROTECTION (Capacitor + Browser + Visibility) ──
   useEffect(() => {
+    // 1. Browser beforeunload (web fallback)
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
 
-    // ── Android/Browser system back button interception ──
-    // Push a dummy history state so pressing back doesn't leave the page
+    // 2. Browser popstate (history back)
     window.history.pushState({ deepSession: true }, '');
-
-    const handlePopState = (e: PopStateEvent) => {
-      // Re-push state to prevent actual navigation
+    const handlePopState = () => {
       window.history.pushState({ deepSession: true }, '');
-      // Show force-end confirmation
       setShowForceEndConfirm(true);
     };
     window.addEventListener('popstate', handlePopState);
 
+    // 3. Capacitor Android hardware back button
+    let capListenerHandle: any = null;
+    (async () => {
+      try {
+        const { App } = await import('@capacitor/app');
+        capListenerHandle = await App.addListener('backButton', () => {
+          setShowForceEndConfirm(true);
+        });
+      } catch {
+        // Not in Capacitor environment — browser-only fallback active
+      }
+    })();
+
+    // 4. Visibility change — detect home/recent apps button
+    //    Show confirmation when user returns from background
+    let wentToBackground = false;
+    const handleVisibility = () => {
+      if (document.hidden) {
+        wentToBackground = true;
+      } else if (wentToBackground) {
+        wentToBackground = false;
+        setShowForceEndConfirm(true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('popstate', handlePopState);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (capListenerHandle?.remove) capListenerHandle.remove();
     };
   }, []);
 
