@@ -4,6 +4,7 @@ import type { Language, Book, DeepSession } from '../types';
 import { translations } from '../i18n/translations';
 import { deepSessionService } from '../services/deepSessionService';
 import Reader from './Reader';
+import { App as CapApp } from '@capacitor/app';
 import {
   Timer, AlertTriangle, ShieldCheck, Star,
   Lock, X, ChevronDown, ChevronUp
@@ -113,29 +114,31 @@ const DeepSessionTimer: React.FC<DeepSessionTimerProps> = ({
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
 
-    // 2. Browser popstate (history back)
-    window.history.pushState({ deepSession: true }, '');
+    // 2. Browser popstate — push multiple states as safety buffer
+    for (let i = 0; i < 3; i++) {
+      window.history.pushState({ deepSession: true, idx: i }, '');
+    }
     const handlePopState = () => {
+      // Always re-push to trap navigation
       window.history.pushState({ deepSession: true }, '');
       setShowForceEndConfirm(true);
     };
     window.addEventListener('popstate', handlePopState);
 
-    // 3. Capacitor Android hardware back button
+    // 3. Capacitor Android hardware back button (◀)
     let capListenerHandle: any = null;
-    (async () => {
-      try {
-        const { App } = await import('@capacitor/app');
-        capListenerHandle = await App.addListener('backButton', () => {
-          setShowForceEndConfirm(true);
-        });
-      } catch {
-        // Not in Capacitor environment — browser-only fallback active
-      }
-    })();
+    try {
+      CapApp.addListener('backButton', ({ canGoBack }) => {
+        // Block ALL back navigation during deep session
+        setShowForceEndConfirm(true);
+      }).then(handle => {
+        capListenerHandle = handle;
+      });
+    } catch {
+      // Not in Capacitor — browser-only fallback active
+    }
 
     // 4. Visibility change — detect home/recent apps button
-    //    Show confirmation when user returns from background
     let wentToBackground = false;
     const handleVisibility = () => {
       if (document.hidden) {
