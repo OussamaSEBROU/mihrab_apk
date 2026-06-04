@@ -10,6 +10,11 @@ export const setupMobile = async (currentView: string, setView: (v: any) => void
   // App Exit / Back Logic
   CapApp.removeAllListeners();
   CapApp.addListener('backButton', ({ canGoBack }) => {
+    if (currentView === 'DEEP_SESSION') {
+      // Don't kill the session — let DeepSessionTimer handle it
+      window.dispatchEvent(new CustomEvent('deepSessionBackPress'));
+      return;
+    }
     if (currentView !== 'SHELF') {
       setView('SHELF');
     } else {
