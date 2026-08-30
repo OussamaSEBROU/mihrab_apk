@@ -15,6 +15,10 @@ export const setupMobile = async (currentView: string, setView: (v: any) => void
       window.dispatchEvent(new CustomEvent('deepSessionBackPress'));
       return;
     }
+    if (currentView === 'READING_CLUB') {
+      window.dispatchEvent(new CustomEvent('readingClubBackPress'));
+      return;
+    }
     if (currentView !== 'SHELF') {
       setView('SHELF');
     } else {
