@@ -60,7 +60,8 @@ export enum ViewState {
   READER = 'READER',
   VAULT = 'VAULT',
   DASHBOARD = 'DASHBOARD',
-  DEEP_SESSION = 'DEEP_SESSION'
+  DEEP_SESSION = 'DEEP_SESSION',
+  READING_CLUB = 'READING_CLUB'
 }
 
 export interface DeepSession {
