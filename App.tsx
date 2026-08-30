@@ -19,10 +19,12 @@ import { storageService } from './services/storageService';
 import { pdfStorage, computeFileHash } from './services/pdfStorage';
 import { setupMobile, triggerHaptic } from './services/mobileService';
 import { communityService } from './services/communityService';
+import ReadingClubRoot from './components/ReadingClub/ReadingClubRoot';
 import {
   Menu, X, Plus, Clock, Star, BookOpen, Trash2, Globe, LayoutDashboard, Library,
   Check, Upload, Loader2, BookMarked, AlertTriangle,
-  ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson, Timer
+  ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson, Timer,
+  Users
 } from 'lucide-react';
 // Global safety check for pdfjsLib to prevent initialization crashes if CDN fails to load
 if (typeof pdfjsLib !== 'undefined') {
@@ -859,6 +861,11 @@ const App: React.FC = () => {
                     <div className="p-3 rounded-xl bg-purple-600/20 group-hover:bg-purple-600/40"><Timer size={20} className="text-purple-500 group-hover:text-white" /></div>
                     <div className="flex flex-col items-start"><span className="text-[11px] font-black uppercase tracking-widest group-hover:text-white">{lang === 'ar' ? 'جلسة الكتاب' : 'Deep Session'}</span><span className="text-[7.5px] uppercase font-black opacity-30 group-hover:text-white/60">{lang === 'ar' ? 'الحاضنة المعرفية' : 'The Intellectual Incubator'}</span></div>
                   </button>
+                  {/* ── READING CLUB SIDEBAR BUTTON ── */}
+                  <button onClick={() => { setView(ViewState.READING_CLUB); setIsSidebarOpen(false); }} className="w-full flex items-center gap-4 p-4 rounded-[1.5rem] bg-white/[0.03] border border-white/5 hover:bg-amber-600/20 transition-all group">
+                    <div className="p-3 rounded-xl bg-amber-600/20 group-hover:bg-amber-600/40"><Users size={20} className="text-amber-500 group-hover:text-white" /></div>
+                    <div className="flex flex-col items-start"><span className="text-[11px] font-black uppercase tracking-widest group-hover:text-white">{lang === 'ar' ? 'نادي القراءة' : 'Reading Club'}</span><span className="text-[7.5px] uppercase font-black opacity-30 group-hover:text-white/60">{lang === 'ar' ? 'المنتدى الفكري' : 'The Intellectual Forum'}</span></div>
+                  </button>
                   <a
                     href={`mailto:oussama.sebrou@gmail.com?subject=${encodeURIComponent(t.contactSubject)}&body=${encodeURIComponent(t.contactBody)}`}
                     className="w-full flex items-center gap-4 p-4 rounded-[1.5rem] bg-white/[0.03] border border-white/5 hover:bg-emerald-600/20 transition-all group no-underline"
@@ -1039,6 +1046,15 @@ const App: React.FC = () => {
                     setView(ViewState.SHELF);
                     setDeepSessionBook(null);
                   }}
+                />
+              </MotionDiv>
+            )}
+            {view === ViewState.READING_CLUB && (
+              <MotionDiv key="reading-club" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20, zIndex: -1 }} transition={{ duration: 0.2 }} className="fixed inset-0 z-[13000] bg-[#020502] overflow-y-auto pointer-events-auto">
+                <ReadingClubRoot
+                  lang={lang}
+                  books={books}
+                  onBack={() => setView(ViewState.SHELF)}
                 />
               </MotionDiv>
             )}
@@ -1645,6 +1661,22 @@ const App: React.FC = () => {
                 className={`relative flex items-center gap-2 p-2 px-4 rounded-xl transition-all duration-500 group text-white/20 hover:text-white/40`}
               >
                 <Timer size={16} className="transition-all duration-500" />
+              </button>
+              <div className="w-px h-3.5 bg-white/10" />
+              <button 
+                onClick={() => { setView(ViewState.READING_CLUB); triggerHaptic(); }} 
+                className={`relative flex items-center gap-2 p-2 px-4 rounded-xl transition-all duration-500 group
+                  ${view === ViewState.READING_CLUB ? 'text-amber-500' : 'text-white/20 hover:text-white/40'}`}
+              >
+                <Users size={16} className={`transition-all duration-500 ${view === ViewState.READING_CLUB ? 'drop-shadow-[0_0_8px_rgba(245,158,11,0.8)]' : ''}`} />
+                {view === ViewState.READING_CLUB && (
+                  <span className="text-[9px] font-black uppercase tracking-widest whitespace-nowrap">
+                    {lang === 'ar' ? 'النادي' : 'Club'}
+                  </span>
+                )}
+                {view === ViewState.READING_CLUB && (
+                  <MotionDiv layoutId="nav-glow" className="absolute inset-0 bg-amber-500/[0.06] rounded-xl -z-10" />
+                )}
               </button>
             </div>
           </MotionDiv>
