@@ -136,8 +136,32 @@ const App: React.FC = () => {
     localStorage.setItem('sanctuary_notif_lang', newLang);
   }, []);
   
-  // Ensure notification language is set if it's missing (legacy support)
+  const [clubInviteToken, setClubInviteToken] = useState<string | undefined>(undefined);
+
+  // ===== DEEP LINK LISTENER FOR CLUB INVITES =====
   useEffect(() => {
+    try {
+      import('@capacitor/app').then(({ App: CapApp }) => {
+        CapApp.addListener('appUrlOpen', (data: any) => {
+          try {
+            if (data?.url) {
+              const urlStr = data.url;
+              if (urlStr.includes('/invite/') || urlStr.includes('mihrab://club')) {
+                const parts = urlStr.split('/invite/');
+                if (parts.length > 1) {
+                  const token = parts[1].split('?')[0].split('#')[0];
+                  if (token) {
+                    setClubInviteToken(token);
+                    setView(ViewState.READING_CLUB);
+                  }
+                }
+              }
+            }
+          } catch {}
+        });
+      }).catch(() => {});
+    } catch {}
+  }, []);
     if (!localStorage.getItem('sanctuary_notif_lang')) {
       localStorage.setItem('sanctuary_notif_lang', lang);
     }
@@ -1054,7 +1078,8 @@ const App: React.FC = () => {
                 <ReadingClubRoot
                   lang={lang}
                   books={books}
-                  onBack={() => setView(ViewState.SHELF)}
+                  onBack={() => { setView(ViewState.SHELF); setClubInviteToken(undefined); }}
+                  inviteToken={clubInviteToken}
                 />
               </MotionDiv>
             )}
