@@ -1,81 +1,207 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { User, BookOpen, Brain, Sparkles, Star, Heart, Flame, Leaf, Moon, Sun, Crown, Gem, Check } from 'lucide-react';
+import { User, Copy, CheckCircle, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { ClubUserProfile } from '../../types/readingClub';
-import { readingClubStorage } from '../../services/readingClubStorage';
+import { readingClubAuth } from '../../services/readingClubAuth';
 
 const MotionDiv = motion.div as any;
+
+const AVATARS = ['📚','🦉','🌙','⭐','🔥','📖','🎯','💎','🌿','🏛️','✨','🕌'];
 
 interface ClubSetupProfileProps {
   lang: 'ar' | 'en';
   onComplete: (profile: ClubUserProfile) => void;
 }
 
-const AVATARS = [User, BookOpen, Brain, Sparkles, Star, Heart, Flame, Leaf, Moon, Sun, Crown, Gem];
-
-export default function ClubSetupProfile({ lang, onComplete }: ClubSetupProfileProps) {
-  const [nickname, setNickname] = useState('');
-  const [selectedAvatar, setSelectedAvatar] = useState(0);
-
+export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComplete }) => {
   const isRTL = lang === 'ar';
-  const t = {
-    title: isRTL ? 'أنشئ هويتك' : 'Create Your Identity',
-    subtitle: isRTL ? 'لنادي القراءة الخاص بك' : 'For your reading club',
-    nickname: isRTL ? 'الاسم المستعار' : 'Nickname',
-    confirm: isRTL ? 'تأكيد' : 'Confirm',
+  const [nickname, setNickname] = useState('');
+  const [avatarIndex, setAvatarIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleSubmit = async () => {
+    if (nickname.length < 2 || nickname.length > 30) {
+      setError(lang === 'ar' ? 'الاسم يجب أن يكون بين 2 و 30 حرف' : 'Nickname must be between 2 and 30 characters');
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await readingClubAuth.register(nickname, avatarIndex);
+      if (response.success && response.user) {
+        if (response.recoveryCode) {
+          setRecoveryCode(response.recoveryCode);
+        } else {
+          onComplete(response.user);
+        }
+      } else {
+        setError(response.error || 'Failed to register');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleConfirm = async () => {
-    if (!nickname.trim()) return;
-    const profile: ClubUserProfile = {
-      id: 'club_user_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8),
-      nickname: nickname.trim(),
-      avatarIndex: selectedAvatar,
-      createdAt: Date.now()
-    };
-    await readingClubStorage.saveUserProfile(profile);
-    onComplete(profile);
+  const handleAcknowledge = async () => {
+    try {
+      setLoading(true);
+      await readingClubAuth.markRecoveryShown();
+      const currentUser = await readingClubAuth.getCurrentUser();
+      if (currentUser) {
+        onComplete(currentUser);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  return (
-    <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-[#000a00] font-black uppercase tracking-widest text-white" dir={isRTL ? 'rtl' : 'ltr'}>
-      <MotionDiv initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm bg-white/5 backdrop-blur-xl border border-white/10 rounded-[2rem] p-6 flex flex-col gap-6">
-        <div className="text-center">
-          <h2 className="text-red-600 text-lg mb-2">{t.title}</h2>
-          <p className="text-white/50 text-[7.5px]">{t.subtitle}</p>
+  const handleCopy = () => {
+    if (recoveryCode) {
+      navigator.clipboard.writeText(recoveryCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  if (recoveryCode) {
+    return (
+      <MotionDiv
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md mx-auto p-6 bg-[#000a00] text-white border border-red-900/30 rounded-xl"
+        dir={isRTL ? 'rtl' : 'ltr'}
+      >
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-600/30">
+            <AlertCircle className="text-red-500 w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-black uppercase tracking-widest text-red-500 mb-2">
+            {lang === 'ar' ? 'رمز الاسترداد الخاص بك' : 'Your Recovery Code'}
+          </h2>
+          <p className="text-gray-400 text-sm">
+            {lang === 'ar' 
+              ? 'يرجى حفظ هذا الرمز في مكان آمن. ستحتاجه لاستعادة حسابك إذا قمت بحذف التطبيق أو تغيير جهازك.' 
+              : 'Please save this code in a safe place. You will need it to recover your account if you delete the app or change your device.'}
+          </p>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <label className="text-[7.5px] text-white/50 ml-2">{t.nickname}</label>
-          <input 
-            type="text" 
-            value={nickname}
-            onChange={e => setNickname(e.target.value)}
-            className="bg-black/50 border border-white/10 rounded-2xl p-4 text-[10px] text-white focus:outline-none focus:border-red-600/50 transition-colors"
-          />
-        </div>
-
-        <div className="grid grid-cols-4 gap-4">
-          {AVATARS.map((Icon, idx) => (
-            <button
-              key={idx}
-              onClick={() => setSelectedAvatar(idx)}
-              className={`aspect-square rounded-2xl flex items-center justify-center transition-all ${selectedAvatar === idx ? 'bg-red-600 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}
-            >
-              <Icon size={24} />
-            </button>
-          ))}
+        <div className="bg-black/50 p-6 rounded-lg border border-red-900/30 mb-8 flex flex-col items-center justify-center relative">
+          <span className="text-3xl font-mono tracking-[0.5em] text-white">{recoveryCode}</span>
+          <button 
+            onClick={handleCopy}
+            className="absolute top-2 right-2 p-2 bg-red-900/20 hover:bg-red-900/40 rounded transition-colors"
+            title={lang === 'ar' ? 'نسخ' : 'Copy'}
+          >
+            {copied ? <CheckCircle className="w-5 h-5 text-green-500" /> : <Copy className="w-5 h-5 text-gray-400" />}
+          </button>
         </div>
 
         <button
-          onClick={handleConfirm}
-          disabled={!nickname.trim()}
-          className="mt-4 w-full bg-red-600 text-white py-4 rounded-2xl text-[10px] flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={handleAcknowledge}
+          disabled={loading}
+          className="w-full flex items-center justify-center space-x-2 rtl:space-x-reverse bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-black uppercase tracking-widest transition-colors disabled:opacity-50"
         >
-          {t.confirm}
-          <Check size={16} />
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <>
+              <span>{lang === 'ar' ? 'لقد قمت بحفظ الرمز' : 'I Have Saved The Code'}</span>
+              <ArrowRight className="w-5 h-5" />
+            </>
+          )}
         </button>
       </MotionDiv>
-    </div>
+    );
+  }
+
+  return (
+    <MotionDiv
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="w-full max-w-md mx-auto p-6 bg-[#000a00] text-white"
+      dir={isRTL ? 'rtl' : 'ltr'}
+    >
+      <div className="text-center mb-8">
+        <h2 className="text-2xl font-black uppercase tracking-widest text-red-500 mb-2">
+          {lang === 'ar' ? 'إنشاء ملفك الشخصي' : 'Create Profile'}
+        </h2>
+        <p className="text-gray-400 text-sm">
+          {lang === 'ar' ? 'انضم إلى أندية القراءة' : 'Join reading clubs'}
+        </p>
+      </div>
+
+      <div className="space-y-6">
+        <div>
+          <label className="block text-xs font-black uppercase tracking-widest text-gray-500 mb-2">
+            {lang === 'ar' ? 'اختر صورة' : 'Choose Avatar'}
+          </label>
+          <div className="grid grid-cols-4 gap-3">
+            {AVATARS.map((emoji, index) => (
+              <button
+                key={index}
+                onClick={() => setAvatarIndex(index)}
+                className={`text-3xl p-3 rounded-lg border transition-all ${
+                  avatarIndex === index 
+                    ? 'border-red-500 bg-red-900/20 scale-110' 
+                    : 'border-white/10 hover:border-white/30 bg-black/30 hover:bg-black/50'
+                }`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-black uppercase tracking-widest text-gray-500 mb-2">
+            {lang === 'ar' ? 'الاسم المستعار' : 'Nickname'}
+          </label>
+          <div className="relative">
+            <div className={`absolute top-0 bottom-0 ${isRTL ? 'right-0 pr-3' : 'left-0 pl-3'} flex items-center pointer-events-none`}>
+              <User className="text-gray-500 w-5 h-5" />
+            </div>
+            <input
+              type="text"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder={lang === 'ar' ? 'أدخل اسمك...' : 'Enter your name...'}
+              className={`w-full bg-black/50 border border-white/10 rounded-lg py-3 ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} text-white focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all font-medium`}
+              maxLength={30}
+            />
+          </div>
+        </div>
+
+        {error && (
+          <div className="p-3 bg-red-900/20 border border-red-500/30 rounded-lg flex items-start space-x-2 rtl:space-x-reverse">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-red-200">{error}</p>
+          </div>
+        )}
+
+        <button
+          onClick={handleSubmit}
+          disabled={loading || !nickname.trim()}
+          className="w-full flex items-center justify-center space-x-2 rtl:space-x-reverse bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-black uppercase tracking-widest transition-colors disabled:opacity-50 mt-4"
+        >
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <>
+              <span>{lang === 'ar' ? 'متابعة' : 'Continue'}</span>
+              <ArrowRight className="w-5 h-5" />
+            </>
+          )}
+        </button>
+      </div>
+    </MotionDiv>
   );
-}
+};
