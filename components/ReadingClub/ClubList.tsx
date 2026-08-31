@@ -167,4 +167,3 @@ export const ClubList: React.FC<ClubListProps> = ({
     </div>
   );
 };
-
