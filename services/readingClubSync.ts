@@ -1,137 +1,157 @@
-import { readingClubStorage } from './readingClubStorage';
-import type { ReadingClub, ClubPost, ClubQuote } from '../types/readingClub';
+// ══════════════════════════════════════════════════════════════
+// READING CLUB SYNC — Real-time Socket.IO connection
+// ══════════════════════════════════════════════════════════════
 
-const CLUB_API_BASE = 'https://mihrabadminv2.onrender.com/api/clubs';
+import { io as SocketIO, Socket } from 'socket.io-client';
+import { readingClubAuth } from './readingClubAuth';
+import type { ClubPost, ClubMember, ReadingClub } from '../types/readingClub';
 
-let isSyncing = false;
+const SOCKET_URL = 'https://mihrab-clubs-backend.onrender.com';
 
-const _wakeUpServer = async (): Promise<boolean> => {
-  try {
-    const res = await fetch(`${CLUB_API_BASE}/health`, { method: 'GET', signal: AbortSignal.timeout(5000) });
-    return res.ok;
-  } catch (e) {
-    return false;
+let socket: Socket | null = null;
+let _isConnecting = false;
+
+// Event listeners registry
+type EventHandler = (...args: any[]) => void;
+const _listeners: Map<string, Set<EventHandler>> = new Map();
+
+// ══════════════════════════════════════════════════════════════
+// CONNECTION MANAGEMENT
+// ══════════════════════════════════════════════════════════════
+const connect = (): Socket | null => {
+  if (socket?.connected) return socket;
+  if (_isConnecting) return socket;
+
+  const token = readingClubAuth.getToken();
+  if (!token) {
+    console.log('[ClubSync] No auth token — skipping connection');
+    return null;
   }
+
+  _isConnecting = true;
+
+  socket = SocketIO(SOCKET_URL, {
+    auth: { token },
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionDelay: 3000,
+    reconnectionAttempts: 10,
+    timeout: 30000,
+  });
+
+  socket.on('connect', () => {
+    console.log('🔌 [ClubSync] Connected to clubs server');
+    _isConnecting = false;
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log(`🔌 [ClubSync] Disconnected: ${reason}`);
+    _isConnecting = false;
+  });
+
+  socket.on('connect_error', (err) => {
+    console.warn(`⚠️ [ClubSync] Connection error: ${err.message}`);
+    _isConnecting = false;
+  });
+
+  // Re-attach all registered event listeners
+  _listeners.forEach((handlers, event) => {
+    handlers.forEach(handler => {
+      socket?.on(event, handler);
+    });
+  });
+
+  return socket;
 };
 
-const _flushQueue = async () => {
-  if (isSyncing || !navigator.onLine) return;
-  
-  const queue = readingClubStorage.getPendingQueue();
-  if (queue.length === 0) return;
-  
-  isSyncing = true;
-  
-  try {
-    const isAwake = await _wakeUpServer();
-    if (!isAwake) {
-      console.log('[ClubSync] Server asleep, will retry queue later');
-      isSyncing = false;
-      return;
-    }
-
-    const remainingQueue = [];
-    
-    for (const item of queue) {
-      if (item.retryCount > 5) {
-        console.warn('[ClubSync] Dropping item after max retries:', item);
-        continue;
-      }
-      
-      try {
-        console.log(`[ClubSync] Mock syncing item type: ${item.type}`, item);
-        const res = await fetch(`${CLUB_API_BASE}/${item.endpoint}`, {
-          method: item.method || 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(item.payload),
-          signal: AbortSignal.timeout(5000)
-        });
-        
-        if (!res.ok) {
-          throw new Error(`Sync failed with status: ${res.status}`);
-        }
-      } catch (err) {
-        console.warn(`[ClubSync] Sync error for item:`, err);
-        item.retryCount++;
-        remainingQueue.push(item);
-      }
-    }
-    
-    readingClubStorage.updatePendingQueue(remainingQueue);
-  } catch (error) {
-    console.error('[ClubSync] Queue flush error', error);
-  } finally {
-    isSyncing = false;
+const disconnect = () => {
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
   }
+  _isConnecting = false;
 };
 
+const ensureConnected = (): Socket | null => {
+  if (!socket?.connected) {
+    return connect();
+  }
+  return socket;
+};
+
+// ══════════════════════════════════════════════════════════════
+// ROOM MANAGEMENT
+// ══════════════════════════════════════════════════════════════
+const joinRoom = (groupId: string) => {
+  const s = ensureConnected();
+  if (s) s.emit('club:join_room', groupId);
+};
+
+const leaveRoom = (groupId: string) => {
+  if (socket?.connected) socket.emit('club:leave_room', groupId);
+};
+
+const sendTyping = (groupId: string) => {
+  if (socket?.connected) socket.emit('club:typing', groupId);
+};
+
+// ══════════════════════════════════════════════════════════════
+// EVENT SUBSCRIPTION
+// ══════════════════════════════════════════════════════════════
+const on = (event: string, handler: EventHandler) => {
+  if (!_listeners.has(event)) _listeners.set(event, new Set());
+  _listeners.get(event)!.add(handler);
+  if (socket) socket.on(event, handler);
+};
+
+const off = (event: string, handler: EventHandler) => {
+  _listeners.get(event)?.delete(handler);
+  if (socket) socket.off(event, handler);
+};
+
+const offAll = (event: string) => {
+  _listeners.delete(event);
+  if (socket) socket.removeAllListeners(event);
+};
+
+// ══════════════════════════════════════════════════════════════
+// AUTO-CONNECT ON VISIBILITY CHANGE
+// ══════════════════════════════════════════════════════════════
 if (typeof window !== 'undefined') {
-  window.addEventListener('online', _flushQueue);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      _flushQueue();
+    if (document.visibilityState === 'visible' && readingClubAuth.isLoggedIn()) {
+      ensureConnected();
     }
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+// EXPORTED SYNC SERVICE
+// ══════════════════════════════════════════════════════════════
 export const readingClubSync = {
-  syncClub: async (club: ReadingClub) => {
-    console.log('[ClubSync] syncClub called for:', club.id);
-    readingClubStorage.addToPendingQueue({
-      type: 'club',
-      endpoint: 'sync',
-      method: 'POST',
-      payload: club
-    });
-    
-    readingClubStorage.updateClub({...club, syncStatus: 'pending'});
-    _flushQueue();
-  },
-  
-  syncPost: async (post: ClubPost) => {
-    console.log('[ClubSync] syncPost called for:', post.id);
-    readingClubStorage.addToPendingQueue({
-      type: 'post',
-      endpoint: `posts/${post.id}`,
-      method: 'POST',
-      payload: post
-    });
-    
-    _flushQueue();
-  },
-  
-  syncQuote: async (quote: ClubQuote) => {
-    console.log('[ClubSync] syncQuote called for:', quote.id);
-    readingClubStorage.addToPendingQueue({
-      type: 'quote',
-      endpoint: `quotes/${quote.id}`,
-      method: 'POST',
-      payload: quote
-    });
-    
-    _flushQueue();
-  },
-  
-  fetchClubUpdates: async (clubId: string) => {
-    console.log('[ClubSync] fetchClubUpdates called for:', clubId);
-    if (!navigator.onLine) return null;
-    
-    try {
-      const res = await fetch(`${CLUB_API_BASE}/${clubId}`, {
-        signal: AbortSignal.timeout(5000)
-      });
-      
-      if (!res.ok) {
-        console.log('[ClubSync] Fetch failed (expected as endpoints missing)', res.status);
-        return null;
-      }
-      
-      return await res.json();
-    } catch (err) {
-      console.log('[ClubSync] Fetch error (expected as endpoints missing)', err);
-      return null;
-    }
-  }
+  connect,
+  disconnect,
+  ensureConnected,
+  joinRoom,
+  leaveRoom,
+  sendTyping,
+  on,
+  off,
+  offAll,
+  getSocket: () => socket,
+  isConnected: () => socket?.connected ?? false,
+
+  // Convenience event listeners
+  onNewMessage: (handler: (message: ClubPost) => void) => on('club:new_message', handler),
+  onMessageUpdated: (handler: (message: ClubPost) => void) => on('club:message_updated', handler),
+  onMessageDeleted: (handler: (data: { messageId: string }) => void) => on('club:message_deleted', handler),
+  onMessagePinned: (handler: (message: ClubPost) => void) => on('club:message_pinned', handler),
+  onMemberJoined: (handler: (member: ClubMember) => void) => on('club:member_joined', handler),
+  onMemberLeft: (handler: (data: { userId: string }) => void) => on('club:member_left', handler),
+  onMemberRemoved: (handler: (data: { userId: string }) => void) => on('club:member_removed', handler),
+  onGroupUpdated: (handler: (group: ReadingClub) => void) => on('club:group_updated', handler),
+  onBookChanged: (handler: (data: any) => void) => on('club:book_changed', handler),
+  onUserTyping: (handler: (data: { userId: string; nickname: string; groupId: string }) => void) =>
+    on('club:user_typing', handler),
 };
