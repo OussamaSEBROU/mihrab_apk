@@ -162,6 +162,9 @@ const App: React.FC = () => {
       }).catch(() => {});
     } catch {}
   }, []);
+
+  // Ensure notification language is set if it's missing (legacy support)
+  useEffect(() => {
     if (!localStorage.getItem('sanctuary_notif_lang')) {
       localStorage.setItem('sanctuary_notif_lang', lang);
     }
