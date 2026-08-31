@@ -111,3 +111,4 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
     </div>
   );
 }
+
