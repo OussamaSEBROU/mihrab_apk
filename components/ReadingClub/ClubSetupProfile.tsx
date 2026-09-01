@@ -205,3 +205,5 @@ export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComp
     </MotionDiv>
   );
 };
+
+export default ClubSetupProfile;
