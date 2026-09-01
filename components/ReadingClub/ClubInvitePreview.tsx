@@ -26,9 +26,13 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
     const fetchPreview = async () => {
       try {
         const res = await clubInvitesAPI.preview(inviteToken);
-        setPreview(res.data);
+        if (res.ok && res.data) {
+          setPreview(res.data);
+        } else {
+          setError(res.error || 'Invalid or expired invite link');
+        }
       } catch (err: any) {
-        setError(err.response?.data?.message || 'Invalid or expired invite link');
+        setError('Invalid or expired invite link');
       } finally {
         setIsLoading(false);
       }
@@ -41,13 +45,17 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
     setIsJoining(true);
     try {
       const res = await clubInvitesAPI.join(inviteToken);
-      if (res.data.status === 'pending') {
-        setJoinStatus('pending');
+      if (res.ok && res.data) {
+        if (res.data.status === 'pending') {
+          setJoinStatus('pending');
+        } else if (res.data.group) {
+          onJoined(res.data.group);
+        }
       } else {
-        onJoined(res.data.club);
+        setError(res.error || 'Failed to join club');
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to join club');
+      setError('Failed to join club');
     } finally {
       setIsJoining(false);
     }
@@ -111,4 +119,3 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
     </div>
   );
 }
-
