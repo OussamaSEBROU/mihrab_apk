@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, ArrowRight, User } from 'lucide-react';
-import { ClubUserProfile, ReadingClub } from '../../types/readingClub';
+import { ClubUserProfile, ReadingClub, ClubView } from '../../types/readingClub';
 import { readingClubAuth } from '../../services/readingClubAuth';
 import { clubGroupsAPI } from '../../services/readingClubAPI';
 import { readingClubSync } from '../../services/readingClubSync';
@@ -16,9 +16,8 @@ import ClubStages from './ClubStages';
 import ClubMembers from './ClubMembers';
 import ClubInvitePreview from './ClubInvitePreview';
 
-const MotionDiv = motion.div as any;
 
-export type ClubView = 'setup' | 'list' | 'create' | 'page' | 'discussion' | 'quotes' | 'stages' | 'members' | 'settings' | 'admin' | 'audit' | 'invite-preview' | 'profile-setup';
+const MotionDiv = motion.div as any;
 
 interface ReadingClubRootProps {
   lang: 'ar' | 'en';
@@ -49,8 +48,8 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
           setProfile(userProfile);
           readingClubSync.connect();
           try {
-            const userClubs = await clubGroupsAPI.getMyGroups();
-            setClubs(userClubs || []);
+            const result = await clubGroupsAPI.getMyGroups();
+            if (result.ok && result.data) setClubs(result.data);
           } catch (error) {
             console.error('Failed to load groups', error);
           }
@@ -76,8 +75,8 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
 
   const refreshClubs = async () => {
     try {
-      const userClubs = await clubGroupsAPI.getMyGroups();
-      setClubs(userClubs || []);
+      const result = await clubGroupsAPI.getMyGroups();
+      if (result.ok && result.data) setClubs(result.data);
     } catch (error) {
       console.error('Failed to refresh groups', error);
     }
@@ -141,15 +140,15 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
             <MotionDiv key="invite-preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
               <ClubInvitePreview 
                 lang={lang} 
-                token={inviteTokenState} 
+                inviteToken={inviteTokenState} 
                 userProfile={profile}
-                onJoin={(joinedClub) => {
+                onJoined={(joinedClub) => {
                   setClubs([...clubs, joinedClub]);
                   setSelectedClub(joinedClub);
                   setInviteTokenState(undefined);
                   setView('page');
                 }}
-                onCancel={() => {
+                onBack={() => {
                   setInviteTokenState(undefined);
                   setView('list');
                 }}
