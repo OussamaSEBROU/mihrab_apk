@@ -238,3 +238,5 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
     </div>
   );
 };
+
+export default ClubCreate;
