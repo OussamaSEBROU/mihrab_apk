@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Users, Quote, Flag, Share2, Settings, BookOpen, Loader2, Copy, CheckCircle } from 'lucide-react';
-import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
+import { ReadingClub, ClubUserProfile, ClubView } from '../../types/readingClub';
 import { clubInvitesAPI } from '../../services/readingClubAPI';
 
 const MotionDiv = motion.div as any;
-
-export type ClubView = 'discussion' | 'members' | 'quotes' | 'stages' | 'settings';
 
 interface ClubPageProps {
   lang: 'ar' | 'en';
@@ -215,3 +213,5 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
     </div>
   );
 };
+
+export default ClubPage;
