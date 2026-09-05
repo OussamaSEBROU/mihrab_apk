@@ -253,13 +253,11 @@ const App: React.FC = () => {
   // Shelf Swiping Logic
   const handleShelfSwipe = useCallback((direction: 'next' | 'prev') => {
     if (shelves.length <= 1) return;
-    const currentIndex = shelves.findIndex(s => s.id === activeShelfId);
-    let nextIndex;
-    if (direction === 'next') {
-      nextIndex = (currentIndex + 1) % shelves.length;
-    } else {
-      nextIndex = (currentIndex - 1 + shelves.length) % shelves.length;
-    }
+    let currentIndex = shelves.findIndex(s => s.id === activeShelfId);
+    if (currentIndex === -1) currentIndex = 0;
+    let nextIndex = direction === 'next'
+      ? (currentIndex + 1) % shelves.length
+      : (currentIndex - 1 + shelves.length) % shelves.length;
     setActiveShelfId(shelves[nextIndex].id);
     setActiveBookIndex(0);
     triggerHaptic();
@@ -1051,21 +1049,45 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 shadow-[0_0_120px_40px_rgba(255,0,0,0.12)] opacity-50" />
                   </div>
 
-                  {/* SHELF NAME LABEL */}
-                  {shelves.length > 0 && (
-                    <div className="w-full text-center mb-1 mt-0 z-10">
-                      <p className="text-[10px] font-black uppercase tracking-[0.35em] text-red-600/70 truncate px-8">
-                        {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || ''}
-                      </p>
-                      {shelves.length > 1 && (
-                        <div className="flex items-center justify-center gap-1.5 mt-1">
-                          {shelves.map((s: ShelfData, idx: number) => (
-                            <div key={s.id} className={`rounded-full transition-all duration-400 ${s.id === activeShelfId ? 'w-5 h-1.5 bg-red-600 shadow-[0_0_8px_rgba(255,0,0,0.6)]' : 'w-1.5 h-1.5 bg-white/15'}`} />
-                          ))}
+                  {/* ── SHELVES BAR (أسماء الرفوف) ── */}
+                  <div className="w-full flex flex-col items-center justify-center gap-1.5 mb-2 mt-0 z-20 px-4">
+                    <div className="flex items-center justify-center gap-2 flex-wrap max-w-full overflow-x-auto py-1 custom-scroll">
+                      {shelves.length > 0 ? (
+                        shelves.map((s: ShelfData) => {
+                          const isActive = s.id === activeShelfId;
+                          return (
+                            <button
+                              key={s.id}
+                              onClick={() => {
+                                setActiveShelfId(s.id);
+                                setActiveBookIndex(0);
+                                triggerHaptic();
+                              }}
+                              className={`px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center gap-1.5 cursor-pointer select-none ${
+                                isActive
+                                  ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(255,0,0,0.6)] border border-red-400 scale-105'
+                                  : 'bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/80 border border-white/10'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white shadow-[0_0_6px_#fff]' : 'bg-white/20'}`} />
+                              <span>{s.name}</span>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-red-600/20 text-red-400 border border-red-600/30 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(255,0,0,0.8)]" />
+                          <span>{lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary'}</span>
                         </div>
                       )}
                     </div>
-                  )}
+                    {shelves.length > 1 && (
+                      <span className="text-[8px] font-bold uppercase tracking-[0.2em] text-white/30 flex items-center gap-1 select-none">
+                        <span>↕</span>
+                        <span>{lang === 'ar' ? 'اسحب عمودياً للتنقل بين الرفوف' : 'Swipe vertically to switch shelves'}</span>
+                      </span>
+                    )}
+                  </div>
                   
                   <Shelf 
                     books={filteredBooks} 
@@ -1077,6 +1099,7 @@ const App: React.FC = () => {
                     onAddShelf={() => setIsAddingShelf(true)}
                     onDeleteBook={(b: Book) => setBookToDelete(b)}
                     onExportBook={handleExportBook}
+                    onShelfSwipe={handleShelfSwipe}
                   />
                   {shelves.length > 1 && (
                     <div className="absolute right-5 top-1/2 -translate-y-1/2 flex flex-col gap-4 opacity-50 transition-all">
