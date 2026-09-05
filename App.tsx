@@ -1031,11 +1031,14 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 shadow-[0_0_120px_40px_rgba(255,0,0,0.12)] opacity-50" />
                   </div>
 
-                  {/* اسم الرف الحالي فقط */}
-                  <div className="w-full text-center mb-2 z-10 pointer-events-none">
-                    <p className="text-[11px] font-black uppercase tracking-[0.25em] text-white/70 truncate px-4">
-                      {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || (lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary')}
-                    </p>
+                  {/* اسم الرف الحالي — بتأثير Glowing و 3D ولمسة فاخرة */}
+                  <div className="w-full flex items-center justify-center mb-2.5 z-10 pointer-events-none">
+                    <div className="relative inline-flex items-center justify-center px-5 py-1 rounded-full bg-black/40 border border-white/10 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.8),0_0_20px_rgba(255,0,0,0.25),inset_0_1px_1px_rgba(255,255,255,0.15)]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-600 shadow-[0_0_8px_#ff0000] shrink-0 mr-2 rtl:ml-2 rtl:mr-0" />
+                      <span className="text-[13px] md:text-sm font-black uppercase tracking-[0.25em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.4)] drop-shadow-[0_0_20px_rgba(255,0,0,0.6)]">
+                        {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || (lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary')}
+                      </span>
+                    </div>
                   </div>
                   
                   <Shelf 
