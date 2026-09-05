@@ -21,6 +21,7 @@ export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComp
   const [error, setError] = useState<string | null>(null);
   
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  const [savedProfile, setSavedProfile] = useState<ClubUserProfile | null>(null);
   const [copied, setCopied] = useState(false);
 
   const handleSubmit = async () => {
@@ -33,34 +34,53 @@ export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComp
     setError(null);
     try {
       const response = await readingClubAuth.register(nickname, avatarIndex);
-      if (response.success && response.user) {
+      if (response.success && response.profile) {
         if (response.recoveryCode) {
           setRecoveryCode(response.recoveryCode);
+          setSavedProfile(response.profile);
         } else {
-          onComplete(response.user);
+          onComplete(response.profile);
         }
       } else {
-        setError(response.error || 'Failed to register');
+        // ===== OFFLINE-FIRST FALLBACK =====
+        // If server is unreachable, save profile locally and proceed
+        const offlineProfile: ClubUserProfile = {
+          id: 'local_' + Date.now(),
+          deviceId: 'pending',
+          nickname: nickname,
+          avatarIndex: avatarIndex,
+          token: '',
+          serverUserId: '',
+          createdAt: Date.now()
+        };
+        localStorage.setItem('sanctuary_club_profile', JSON.stringify(offlineProfile));
+        onComplete(offlineProfile);
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      // ===== OFFLINE-FIRST FALLBACK ON EXCEPTION =====
+      const offlineProfile: ClubUserProfile = {
+        id: 'local_' + Date.now(),
+        deviceId: 'pending',
+        nickname: nickname,
+        avatarIndex: avatarIndex,
+        token: '',
+        serverUserId: '',
+        createdAt: Date.now()
+      };
+      localStorage.setItem('sanctuary_club_profile', JSON.stringify(offlineProfile));
+      onComplete(offlineProfile);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAcknowledge = async () => {
-    try {
-      setLoading(true);
-      await readingClubAuth.markRecoveryShown();
-      const currentUser = await readingClubAuth.getCurrentUser();
-      if (currentUser) {
-        onComplete(currentUser);
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+  const handleAcknowledge = () => {
+    readingClubAuth.markRecoveryShown();
+    if (savedProfile) {
+      onComplete(savedProfile);
+    } else {
+      const localProfile = readingClubAuth.getLocalProfile();
+      if (localProfile) onComplete(localProfile);
     }
   };
 
@@ -107,17 +127,10 @@ export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComp
 
         <button
           onClick={handleAcknowledge}
-          disabled={loading}
-          className="w-full flex items-center justify-center space-x-2 rtl:space-x-reverse bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-black uppercase tracking-widest transition-colors disabled:opacity-50"
+          className="w-full flex items-center justify-center space-x-2 rtl:space-x-reverse bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-black uppercase tracking-widest transition-colors"
         >
-          {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
-            <>
-              <span>{lang === 'ar' ? 'لقد قمت بحفظ الرمز' : 'I Have Saved The Code'}</span>
-              <ArrowRight className="w-5 h-5" />
-            </>
-          )}
+          <span>{lang === 'ar' ? 'لقد قمت بحفظ الرمز' : 'I Have Saved The Code'}</span>
+          <ArrowRight className="w-5 h-5" />
         </button>
       </MotionDiv>
     );
