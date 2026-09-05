@@ -19,12 +19,13 @@ interface ShelfProps {
   onDeleteBook: (book: Book) => void;
   onExportBook?: (book: Book) => void;
   onAddShelf?: () => void;
+  onShelfSwipe?: (direction: 'next' | 'prev') => void;
 }
 
 // Cover image cache — in-memory for instant display
 const coverCache = new Map<string, string>();
 
-export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeIndex, onActiveIndexChange, onSelectBook, onAddBook, onDeleteBook, onExportBook }) => {
+export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeIndex, onActiveIndexChange, onSelectBook, onAddBook, onDeleteBook, onExportBook, onShelfSwipe }) => {
   const t = (translations as any)[lang];
   const dragX = useMotionValue(0);
   const [dragOffset, setDragOffset] = useState(0);
@@ -126,13 +127,24 @@ export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeInde
     if (!touchStartRef.current) return;
     const touch = e.changedTouches[0];
     const dx = touch.clientX - touchStartRef.current.x;
+    const dy = touch.clientY - touchStartRef.current.y;
     const elapsed = Date.now() - touchStartRef.current.time;
-    const velocity = Math.abs(dx) / elapsed;
+    const velocityX = Math.abs(dx) / elapsed;
+    const velocityY = Math.abs(dy) / elapsed;
 
     const SWIPE_THRESHOLD = 20;
     const VELOCITY_THRESHOLD = 0.3;
 
-    if (isSwiping.current && (Math.abs(dx) > SWIPE_THRESHOLD || velocity > VELOCITY_THRESHOLD)) {
+    // 1. VERTICAL SWIPE (Navigation between shelves)
+    if (Math.abs(dy) > Math.abs(dx) && (Math.abs(dy) > 35 || velocityY > 0.22)) {
+      if (dy < 0) {
+        onShelfSwipe?.('next');
+      } else {
+        onShelfSwipe?.('prev');
+      }
+    }
+    // 2. HORIZONTAL SWIPE (Navigation between books)
+    else if (isSwiping.current && (Math.abs(dx) > SWIPE_THRESHOLD || velocityX > VELOCITY_THRESHOLD)) {
       if (dx < 0 && activeIndex < books.length - 1) {
         onActiveIndexChange(activeIndex + 1);
       } else if (dx > 0 && activeIndex > 0) {
@@ -144,7 +156,18 @@ export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeInde
     isSwiping.current = false;
     setDragOffset(0);
     dragX.set(0);
-  }, [activeIndex, books.length, onActiveIndexChange, dragX]);
+  }, [activeIndex, books.length, onActiveIndexChange, onShelfSwipe, dragX]);
+
+  // Desktop mouse wheel scroll to switch shelves
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (Math.abs(e.deltaY) > 40) {
+      if (e.deltaY > 0) {
+        onShelfSwipe?.('next');
+      } else {
+        onShelfSwipe?.('prev');
+      }
+    }
+  }, [onShelfSwipe]);
 
   const handleBookTap = useCallback((book: Book, isCenter: boolean) => {
     if (!isCenter || isSwiping.current) return;
@@ -186,13 +209,14 @@ export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeInde
         ref={containerRef}
         className="relative w-full flex items-center justify-center perspective-1000"
         style={{ 
-          touchAction: 'pan-y',
+          touchAction: 'none',
           height: 'min(52vh, 440px)',
           marginTop: '-12px'
         }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onWheel={handleWheel}
       >
         <AnimatePresence mode="popLayout">
           {visibleBooks.map(({ book, index, diff }) => {
