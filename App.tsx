@@ -1035,7 +1035,7 @@ const App: React.FC = () => {
                   <div className="w-full flex items-center justify-center mb-2.5 z-10 pointer-events-none">
                     <div className="relative inline-flex items-center justify-center px-5 py-1 rounded-full bg-black/40 border border-white/10 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.8),0_0_20px_rgba(255,0,0,0.25),inset_0_1px_1px_rgba(255,255,255,0.15)]">
                       <span className="w-1.5 h-1.5 rounded-full bg-red-600 shadow-[0_0_8px_#ff0000] shrink-0 mr-2 rtl:ml-2 rtl:mr-0" />
-                      <span className="text-[13px] md:text-sm font-black uppercase tracking-[0.25em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.4)] drop-shadow-[0_0_20px_rgba(255,0,0,0.6)]">
+                      <span className={`${lang === 'ar' ? 'text-[11px] md:text-xs font-black tracking-normal' : 'text-[11px] md:text-xs font-black uppercase tracking-[0.25em]'} text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.4)] drop-shadow-[0_0_20px_rgba(255,0,0,0.6)]`}>
                         {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || (lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary')}
                       </span>
                     </div>
