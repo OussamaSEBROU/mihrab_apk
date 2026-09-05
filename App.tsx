@@ -1026,12 +1026,46 @@ const App: React.FC = () => {
                     )}
                   </AnimatePresence>
                 </div>
-                <div className="flex-1 flex flex-col justify-center items-center pb-12 relative px-2">
+                <div className="flex-1 flex flex-col justify-center items-center pb-12 relative px-2"
+                  onTouchStart={(e) => {
+                    const touch = e.touches[0];
+                    (e.currentTarget as any)._shelfTouchStart = { y: touch.clientY, time: Date.now() };
+                  }}
+                  onTouchEnd={(e) => {
+                    const start = (e.currentTarget as any)._shelfTouchStart;
+                    if (!start) return;
+                    const touch = e.changedTouches[0];
+                    const dy = touch.clientY - start.y;
+                    const elapsed = Date.now() - start.time;
+                    const velocity = Math.abs(dy) / elapsed;
+                    if (Math.abs(dy) > 60 && velocity > 0.25 && shelves.length > 1) {
+                      if (dy < 0) handleShelfSwipe('next');
+                      else handleShelfSwipe('prev');
+                    }
+                    (e.currentTarget as any)._shelfTouchStart = null;
+                  }}
+                >
                   {/* CINEMATIC SHELF AURA */}
                   <div className="absolute inset-x-10 inset-y-20 rounded-[5rem] pointer-events-none -z-10">
                     <div className="absolute inset-0 bg-red-600/8 blur-[60px] opacity-30" />
                     <div className="absolute inset-0 shadow-[0_0_120px_40px_rgba(255,0,0,0.12)] opacity-50" />
                   </div>
+
+                  {/* SHELF NAME LABEL */}
+                  {shelves.length > 0 && (
+                    <div className="w-full text-center mb-1 mt-0 z-10">
+                      <p className="text-[10px] font-black uppercase tracking-[0.35em] text-red-600/70 truncate px-8">
+                        {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || ''}
+                      </p>
+                      {shelves.length > 1 && (
+                        <div className="flex items-center justify-center gap-1.5 mt-1">
+                          {shelves.map((s: ShelfData, idx: number) => (
+                            <div key={s.id} className={`rounded-full transition-all duration-400 ${s.id === activeShelfId ? 'w-5 h-1.5 bg-red-600 shadow-[0_0_8px_rgba(255,0,0,0.6)]' : 'w-1.5 h-1.5 bg-white/15'}`} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   
                   <Shelf 
                     books={filteredBooks} 
