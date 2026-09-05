@@ -173,6 +173,7 @@ const App: React.FC = () => {
   const [books, setBooks] = useState<Book[]>([]);
   const [shelves, setShelves] = useState<ShelfData[]>([]);
   const [activeShelfId, setActiveShelfId] = useState<string>('default');
+  const [shelfSwipeDirection, setShelfSwipeDirection] = useState<'next' | 'prev'>('next');
   const [activeBookIndex, setActiveBookIndex] = useState(0);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [isAddingBook, setIsAddingBook] = useState(false);
@@ -258,6 +259,7 @@ const App: React.FC = () => {
     let nextIndex = direction === 'next'
       ? (currentIndex + 1) % shelves.length
       : (currentIndex - 1 + shelves.length) % shelves.length;
+    setShelfSwipeDirection(direction);
     setActiveShelfId(shelves[nextIndex].id);
     setActiveBookIndex(0);
     triggerHaptic();
@@ -1031,28 +1033,57 @@ const App: React.FC = () => {
                     <div className="absolute inset-0 shadow-[0_0_120px_40px_rgba(255,0,0,0.12)] opacity-50" />
                   </div>
 
-                  {/* اسم الرف الحالي — بتأثير Glowing و 3D ولمسة فاخرة */}
-                  <div className="w-full flex items-center justify-center mb-2.5 z-10 pointer-events-none">
-                    <div className="relative inline-flex items-center justify-center px-5 py-1 rounded-full bg-black/40 border border-white/10 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.8),0_0_20px_rgba(255,0,0,0.25),inset_0_1px_1px_rgba(255,255,255,0.15)]">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-600 shadow-[0_0_8px_#ff0000] shrink-0 mr-2 rtl:ml-2 rtl:mr-0" />
-                      <span className={`${lang === 'ar' ? 'text-[11px] md:text-xs font-black tracking-normal' : 'text-[11px] md:text-xs font-black uppercase tracking-[0.25em]'} text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.4)] drop-shadow-[0_0_20px_rgba(255,0,0,0.6)]`}>
-                        {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || (lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary')}
-                      </span>
-                    </div>
-                  </div>
+                  {/* اسم الرف الحالي — ZEN Mode + إطار مستطيل عصري فاخر */}
+                  <MotionDiv 
+                    animate={{ opacity: isUiVisible ? 1 : 0.25, y: isUiVisible ? 0 : -3 }}
+                    transition={{ duration: 0.45, ease: 'easeOut' }}
+                    className="w-full flex items-center justify-center mb-2 z-10 pointer-events-none"
+                  >
+                    <AnimatePresence mode="wait">
+                      <MotionDiv
+                        key={activeShelfId}
+                        initial={{ opacity: 0, y: shelfSwipeDirection === 'next' ? 6 : -6, scale: 0.96 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: shelfSwipeDirection === 'next' ? -6 : 6, scale: 0.96 }}
+                        transition={{ duration: 0.2, ease: 'easeOut' }}
+                        className="relative inline-flex items-center justify-center px-4 py-1.5 rounded-xl bg-black/60 border border-white/10 backdrop-blur-2xl shadow-[0_8px_28px_rgba(0,0,0,0.85),0_0_15px_rgba(255,0,0,0.2),inset_0_1px_1px_rgba(255,255,255,0.15)]"
+                      >
+                        {/* خط إضاءة علوي فاخر */}
+                        <div className="absolute inset-x-2 top-0 h-[1px] bg-gradient-to-r from-transparent via-red-500/50 to-transparent pointer-events-none" />
+                        <span className="w-1.5 h-1.5 rounded-sm bg-red-600 shadow-[0_0_8px_#ff0000] shrink-0 mr-2 rtl:ml-2 rtl:mr-0" />
+                        <span className={`${lang === 'ar' ? 'text-[11px] md:text-xs font-black tracking-normal' : 'text-[11px] md:text-xs font-black uppercase tracking-[0.25em]'} text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.4)] drop-shadow-[0_0_20px_rgba(255,0,0,0.6)]`}>
+                          {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || (lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary')}
+                        </span>
+                      </MotionDiv>
+                    </AnimatePresence>
+                  </MotionDiv>
                   
-                  <Shelf 
-                    books={filteredBooks} 
-                    lang={lang} 
-                    activeIndex={activeBookIndex} 
-                    onActiveIndexChange={setActiveBookIndex} 
-                    onSelectBook={(b: Book) => { setSelectedBook(b); setView(ViewState.READER); }} 
-                    onAddBook={() => setIsAddingBook(true)} 
-                    onAddShelf={() => setIsAddingShelf(true)}
-                    onDeleteBook={(b: Book) => setBookToDelete(b)}
-                    onExportBook={handleExportBook}
-                    onShelfSwipe={handleShelfSwipe}
-                  />
+                  {/* انتقال سينمائي ثلاثي الأبعاد فائق السرعة والسلاسة بين الرفوف */}
+                  <div className="w-full flex-1 flex flex-col items-center justify-center relative overflow-visible">
+                    <AnimatePresence mode="wait">
+                      <MotionDiv
+                        key={activeShelfId}
+                        initial={{ opacity: 0, y: shelfSwipeDirection === 'next' ? 40 : -40, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: shelfSwipeDirection === 'next' ? -40 : 40, scale: 0.97 }}
+                        transition={{ type: 'spring', stiffness: 500, damping: 36, mass: 0.7 }}
+                        className="w-full h-full flex flex-col items-center justify-center"
+                      >
+                        <Shelf 
+                          books={filteredBooks} 
+                          lang={lang} 
+                          activeIndex={activeBookIndex} 
+                          onActiveIndexChange={setActiveBookIndex} 
+                          onSelectBook={(b: Book) => { setSelectedBook(b); setView(ViewState.READER); }} 
+                          onAddBook={() => setIsAddingBook(true)} 
+                          onAddShelf={() => setIsAddingShelf(true)}
+                          onDeleteBook={(b: Book) => setBookToDelete(b)}
+                          onExportBook={handleExportBook}
+                          onShelfSwipe={handleShelfSwipe}
+                        />
+                      </MotionDiv>
+                    </AnimatePresence>
+                  </div>
                   {shelves.length > 1 && (
                     <div className="absolute right-5 top-1/2 -translate-y-1/2 flex flex-col gap-4 opacity-50 transition-all">
                       {shelves.map((s: ShelfData) => (
