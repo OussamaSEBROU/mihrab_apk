@@ -1024,69 +1024,18 @@ const App: React.FC = () => {
                     )}
                   </AnimatePresence>
                 </div>
-                <div className="flex-1 flex flex-col justify-center items-center pb-12 relative px-2"
-                  onTouchStart={(e) => {
-                    const touch = e.touches[0];
-                    (e.currentTarget as any)._shelfTouchStart = { y: touch.clientY, time: Date.now() };
-                  }}
-                  onTouchEnd={(e) => {
-                    const start = (e.currentTarget as any)._shelfTouchStart;
-                    if (!start) return;
-                    const touch = e.changedTouches[0];
-                    const dy = touch.clientY - start.y;
-                    const elapsed = Date.now() - start.time;
-                    const velocity = Math.abs(dy) / elapsed;
-                    if (Math.abs(dy) > 60 && velocity > 0.25 && shelves.length > 1) {
-                      if (dy < 0) handleShelfSwipe('next');
-                      else handleShelfSwipe('prev');
-                    }
-                    (e.currentTarget as any)._shelfTouchStart = null;
-                  }}
-                >
+                <div className="flex-1 flex flex-col justify-center items-center pb-12 relative px-2">
                   {/* CINEMATIC SHELF AURA */}
                   <div className="absolute inset-x-10 inset-y-20 rounded-[5rem] pointer-events-none -z-10">
                     <div className="absolute inset-0 bg-red-600/8 blur-[60px] opacity-30" />
                     <div className="absolute inset-0 shadow-[0_0_120px_40px_rgba(255,0,0,0.12)] opacity-50" />
                   </div>
 
-                  {/* ── SHELVES BAR (أسماء الرفوف) ── */}
-                  <div className="w-full flex flex-col items-center justify-center gap-1.5 mb-2 mt-0 z-20 px-4">
-                    <div className="flex items-center justify-center gap-2 flex-wrap max-w-full overflow-x-auto py-1 custom-scroll">
-                      {shelves.length > 0 ? (
-                        shelves.map((s: ShelfData) => {
-                          const isActive = s.id === activeShelfId;
-                          return (
-                            <button
-                              key={s.id}
-                              onClick={() => {
-                                setActiveShelfId(s.id);
-                                setActiveBookIndex(0);
-                                triggerHaptic();
-                              }}
-                              className={`px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all duration-300 flex items-center gap-1.5 cursor-pointer select-none ${
-                                isActive
-                                  ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(255,0,0,0.6)] border border-red-400 scale-105'
-                                  : 'bg-white/5 hover:bg-white/10 text-white/40 hover:text-white/80 border border-white/10'
-                              }`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white shadow-[0_0_6px_#fff]' : 'bg-white/20'}`} />
-                              <span>{s.name}</span>
-                            </button>
-                          );
-                        })
-                      ) : (
-                        <div className="px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-red-600/20 text-red-400 border border-red-600/30 flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(255,0,0,0.8)]" />
-                          <span>{lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary'}</span>
-                        </div>
-                      )}
-                    </div>
-                    {shelves.length > 1 && (
-                      <span className="text-[8px] font-bold uppercase tracking-[0.2em] text-white/30 flex items-center gap-1 select-none">
-                        <span>↕</span>
-                        <span>{lang === 'ar' ? 'اسحب عمودياً للتنقل بين الرفوف' : 'Swipe vertically to switch shelves'}</span>
-                      </span>
-                    )}
+                  {/* اسم الرف الحالي فقط */}
+                  <div className="w-full text-center mb-2 z-10 pointer-events-none">
+                    <p className="text-[11px] font-black uppercase tracking-[0.25em] text-white/70 truncate px-4">
+                      {shelves.find((s: ShelfData) => s.id === activeShelfId)?.name || (lang === 'ar' ? 'المحراب الأساسي' : 'Main Sanctuary')}
+                    </p>
                   </div>
                   
                   <Shelf 
