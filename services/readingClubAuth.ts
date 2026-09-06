@@ -2,6 +2,7 @@
 // READING CLUB AUTH — Device ID + Recovery Code Authentication
 // ══════════════════════════════════════════════════════════════
 
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { syncBridge } from './syncBridge';
 import type { ClubUserProfile } from '../types/readingClub';
 
@@ -10,11 +11,71 @@ const TOKEN_KEY = 'sanctuary_club_auth_token';
 const PROFILE_KEY = 'sanctuary_club_profile';
 const RECOVERY_KEY = 'sanctuary_club_recovery_shown';
 
+// ===== FRIENDLY ERROR MAPPING (no technical details leak) =====
+const friendlyNetworkError = (lang: 'ar' | 'en' = 'ar'): string =>
+  lang === 'ar' ? 'تعذر الاتصال بالخادم. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.' : 'Could not reach the server. Check your connection and try again.';
+
+const friendlyTimeoutError = (lang: 'ar' | 'en' = 'ar'): string =>
+  lang === 'ar' ? 'استغرق الاتصال وقتاً طويلاً. حاول مرة أخرى.' : 'The connection took too long. Please try again.';
+
+const mapNetworkError = (e: any): string => {
+  const msg = e?.message || '';
+  if (e?.name === 'AbortError' || msg.includes('abort') || msg.includes('timeout') || msg.includes('Timeout')) return friendlyTimeoutError();
+  return friendlyNetworkError();
+};
+
+// ===== NATIVE TRANSPORT (bypasses WebView CORS on device) =====
+const isNative = () => Capacitor.isNativePlatform();
+
+const nativeRequest = async <T>(
+  endpoint: string,
+  options: RequestInit,
+  headers: Record<string, string>,
+  timeoutMs: number
+): Promise<{ status: number; data: T }> => {
+  const method = (options.method || 'GET') as any;
+  let bodyData: any;
+  if (typeof options.body === 'string' && options.body) {
+    try { bodyData = JSON.parse(options.body); } catch { bodyData = options.body; }
+  }
+  let timer: any = null;
+  try {
+    const request = CapacitorHttp.request({
+      url: `${CLUBS_API}${endpoint}`,
+      method,
+      headers,
+      data: bodyData,
+      readTimeout: timeoutMs,
+      connectTimeout: timeoutMs
+    });
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { name: 'AbortError' })), timeoutMs);
+    });
+    const resp: any = await Promise.race([request, timeout]);
+    let parsed: any = resp.data;
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed); } catch { /* keep raw string */ }
+    }
+    return { status: resp.status, data: parsed as T };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 // ===== SERVER WAKE-UP (same pattern as syncBridge) =====
 let _serverAwake = false;
 const wakeUpServer = async (): Promise<boolean> => {
   if (_serverAwake) return true;
   try {
+    if (isNative()) {
+      const resp = await nativeRequest<any>('/health', {}, {}, 50000);
+      if (resp.status >= 200 && resp.status < 300) {
+        _serverAwake = true;
+        setTimeout(() => { _serverAwake = false; }, 5 * 60 * 1000);
+        return true;
+      }
+      return false;
+    }
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 50000);
     const resp = await fetch(`${CLUBS_API}/health`, { signal: ctrl.signal });
@@ -44,14 +105,21 @@ const apiCall = async <T>(
       };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 30000);
-      const resp = await fetch(`${CLUBS_API}${endpoint}`, {
-        ...options,
-        headers,
-        signal: ctrl.signal
-      });
-      clearTimeout(tid);
+      let resp: Response;
+      if (isNative()) {
+        // Native transport: no WebView CORS/CSP interception on device
+        const { status, data } = await nativeRequest<T>(endpoint, options, headers, 30000);
+        resp = new Response(JSON.stringify(data ?? {}), { status });
+      } else {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 30000);
+        resp = await fetch(`${CLUBS_API}${endpoint}`, {
+          ...options,
+          headers,
+          signal: ctrl.signal
+        });
+        clearTimeout(tid);
+      }
 
       const data = await resp.json().catch(() => ({}));
       if (resp.ok) return { ok: true, data: data as T };
@@ -61,10 +129,10 @@ const apiCall = async <T>(
         await new Promise(r => setTimeout(r, attempt * 3000));
         continue;
       }
-      return { ok: false, error: e.message || 'Network error' };
+      return { ok: false, error: mapNetworkError(e) };
     }
   }
-  return { ok: false, error: 'Max retries reached' };
+  return { ok: false, error: mapNetworkError({ message: 'network' }) };
 };
 
 // ===== TOKEN MANAGEMENT =====
@@ -139,7 +207,7 @@ export const readingClubAuth = {
 
       return { success: true, profile, recoveryCode };
     } catch (e: any) {
-      return { success: false, error: e.message };
+      return { success: false, error: mapNetworkError(e) };
     }
   },
 
@@ -224,6 +292,25 @@ export const readingClubAuth = {
    * Generic authenticated API call — used by other services
    */
   apiCall,
+
+  /**
+   * Public (unauthenticated) GET via the same transport — used by invite preview
+   */
+  publicGet: async <T>(path: string, timeoutMs = 30000): Promise<{ ok: boolean; data?: T; error?: string }> => {
+    try {
+      if (isNative()) {
+        const { status, data } = await nativeRequest<T>(path, {}, {}, timeoutMs);
+        if (status >= 200 && status < 300) return { ok: true, data };
+        return { ok: false, error: `HTTP ${status}` };
+      }
+      const resp = await fetch(`${CLUBS_API}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok) return { ok: true, data: data as T };
+      return { ok: false, error: (data as any).error || `HTTP ${resp.status}` };
+    } catch (e: any) {
+      return { ok: false, error: mapNetworkError(e) };
+    }
+  },
 
   /**
    * Wake up the server
