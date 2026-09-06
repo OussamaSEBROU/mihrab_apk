@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Save, Globe, Lock, User, Loader2, AlertCircle } from 'lucide-react';
 import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 import { clubGroupsAPI } from '../../services/readingClubAPI';
+import ConfirmDialog from './shared/ConfirmDialog';
 
 const MotionDiv = motion.div as any;
 
@@ -26,6 +27,26 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+
+  const hasUnsavedInput = !!(name.trim() || description.trim());
+
+  // Guard unsaved club fields before leaving (fires before the root's back handler)
+  useEffect(() => {
+    const handleBack = (e: any) => {
+      if (hasUnsavedInput) {
+        e.stopImmediatePropagation();
+        setShowExitConfirm(true);
+      }
+    };
+    window.addEventListener('readingClubBackPress', handleBack);
+    return () => window.removeEventListener('readingClubBackPress', handleBack);
+  }, [hasUnsavedInput]);
+
+  const handleBackClick = () => {
+    if (hasUnsavedInput) setShowExitConfirm(true);
+    else onBack();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +70,7 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
         currentBookId: bookId || undefined
       });
       
-      if (response.success && response.data) {
+      if (response.ok && response.data) {
         onCreated(response.data.group as any);
       } else {
         setError(response.error || 'Failed to create club');
@@ -65,8 +86,8 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
     <div className="w-full h-full bg-[#000a00] text-white flex flex-col" dir={isRTL ? 'rtl' : 'ltr'}>
       <div className="p-4 flex items-center justify-between border-b border-white/5">
         <div className="flex items-center space-x-3 rtl:space-x-reverse">
-          <button 
-            onClick={onBack}
+          <button
+            onClick={handleBackClick}
             className="p-2 -ml-2 rtl:-mr-2 rtl:ml-0 rounded-full hover:bg-white/5 transition-colors"
           >
             <ArrowLeft className={`w-6 h-6 ${isRTL ? 'rotate-180' : ''}`} />
@@ -235,6 +256,19 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
           </button>
         </form>
       </div>
+
+      {showExitConfirm && (
+        <ConfirmDialog
+          lang={lang}
+          kind="warning"
+          title={isRTL ? 'المغادرة؟' : 'Leave?'}
+          operationLabel={isRTL ? 'إلغاء إنشاء النادي والرجوع' : 'Discard club creation and go back'}
+          consequencesLabel={isRTL ? 'الاسم والوصف المكتوبان لن يُحفظا وسيُفقدان' : 'The typed name and description will not be saved'}
+          permanenceLabel={isRTL ? 'يمكنك إنشاء النادي مجدداً في أي وقت' : 'You can create the club again anytime'}
+          onCancel={() => setShowExitConfirm(false)}
+          onConfirm={() => { setShowExitConfirm(false); onBack(); }}
+        />
+      )}
     </div>
   );
 };
