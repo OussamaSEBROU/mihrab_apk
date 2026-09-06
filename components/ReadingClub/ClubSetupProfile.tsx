@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { User, Copy, CheckCircle, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { ClubUserProfile } from '../../types/readingClub';
 import { readingClubAuth } from '../../services/readingClubAuth';
+import ConfirmDialog from './shared/ConfirmDialog';
 
 const MotionDiv = motion.div as any;
 
@@ -11,18 +12,31 @@ const AVATARS = ['📚','🦉','🌙','⭐','🔥','📖','🎯','💎','🌿','
 interface ClubSetupProfileProps {
   lang: 'ar' | 'en';
   onComplete: (profile: ClubUserProfile) => void;
+  onBack?: () => void;
 }
 
-export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComplete }) => {
+export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComplete, onBack }) => {
   const isRTL = lang === 'ar';
   const [nickname, setNickname] = useState('');
   const [avatarIndex, setAvatarIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
-  const [savedProfile, setSavedProfile] = useState<ClubUserProfile | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+
+  // Guard unsaved nickname before leaving (fires before the root's back handler)
+  useEffect(() => {
+    const handleBack = (e: any) => {
+      if (nickname.trim() && onBack) {
+        e.stopImmediatePropagation();
+        setShowExitConfirm(true);
+      }
+    };
+    window.addEventListener('readingClubBackPress', handleBack);
+    return () => window.removeEventListener('readingClubBackPress', handleBack);
+  }, [nickname, onBack]);
 
   const handleSubmit = async () => {
     if (nickname.length < 2 || nickname.length > 30) {
@@ -37,50 +51,33 @@ export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComp
       if (response.success && response.profile) {
         if (response.recoveryCode) {
           setRecoveryCode(response.recoveryCode);
-          setSavedProfile(response.profile);
         } else {
           onComplete(response.profile);
         }
       } else {
-        // ===== OFFLINE-FIRST FALLBACK =====
-        // If server is unreachable, save profile locally and proceed
-        const offlineProfile: ClubUserProfile = {
-          id: 'local_' + Date.now(),
-          deviceId: 'pending',
-          nickname: nickname,
-          avatarIndex: avatarIndex,
-          token: '',
-          serverUserId: '',
-          createdAt: Date.now()
-        };
-        localStorage.setItem('sanctuary_club_profile', JSON.stringify(offlineProfile));
-        onComplete(offlineProfile);
+        setError(response.error || 'Failed to register');
       }
     } catch (err: any) {
-      // ===== OFFLINE-FIRST FALLBACK ON EXCEPTION =====
-      const offlineProfile: ClubUserProfile = {
-        id: 'local_' + Date.now(),
-        deviceId: 'pending',
-        nickname: nickname,
-        avatarIndex: avatarIndex,
-        token: '',
-        serverUserId: '',
-        createdAt: Date.now()
-      };
-      localStorage.setItem('sanctuary_club_profile', JSON.stringify(offlineProfile));
-      onComplete(offlineProfile);
+      setError(err.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAcknowledge = () => {
-    readingClubAuth.markRecoveryShown();
-    if (savedProfile) {
-      onComplete(savedProfile);
-    } else {
-      const localProfile = readingClubAuth.getLocalProfile();
-      if (localProfile) onComplete(localProfile);
+  const handleAcknowledge = async () => {
+    try {
+      setLoading(true);
+      await readingClubAuth.markRecoveryShown();
+      const currentUser = readingClubAuth.getLocalProfile();
+      if (currentUser) {
+        onComplete(currentUser);
+      } else {
+        setError(lang === 'ar' ? 'تعذر إكمال العملية. حاول مرة أخرى.' : 'Could not complete. Please try again.');
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -127,10 +124,17 @@ export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComp
 
         <button
           onClick={handleAcknowledge}
-          className="w-full flex items-center justify-center space-x-2 rtl:space-x-reverse bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-black uppercase tracking-widest transition-colors"
+          disabled={loading}
+          className="w-full flex items-center justify-center space-x-2 rtl:space-x-reverse bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-black uppercase tracking-widest transition-colors disabled:opacity-50"
         >
-          <span>{lang === 'ar' ? 'لقد قمت بحفظ الرمز' : 'I Have Saved The Code'}</span>
-          <ArrowRight className="w-5 h-5" />
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <>
+              <span>{lang === 'ar' ? 'لقد قمت بحفظ الرمز' : 'I Have Saved The Code'}</span>
+              <ArrowRight className="w-5 h-5" />
+            </>
+          )}
         </button>
       </MotionDiv>
     );
@@ -215,6 +219,20 @@ export const ClubSetupProfile: React.FC<ClubSetupProfileProps> = ({ lang, onComp
           )}
         </button>
       </div>
+
+      {showExitConfirm && (
+        <ConfirmDialog
+          lang={lang}
+          kind="warning"
+          title={isRTL ? 'المغادرة؟' : 'Leave?'}
+          operationLabel={isRTL ? 'إلغاء إنشاء الملف الشخصي والخروج من قسم الأندية' : 'Discard profile setup and leave the clubs section'}
+          consequencesLabel={isRTL ? 'الاسم المكتوب لن يُحفظ وستفقده' : 'The typed nickname will not be saved'}
+          permanenceLabel={isRTL ? 'قابل لإعادة الإدخال في أي وقت' : 'You can re-enter anytime'}
+          loading={loading}
+          onCancel={() => setShowExitConfirm(false)}
+          onConfirm={() => { setShowExitConfirm(false); onBack && onBack(); }}
+        />
+      )}
     </MotionDiv>
   );
 };
