@@ -90,14 +90,10 @@ export const clubInvitesAPI = {
     }),
 
   preview: async (token: string) => {
-    // Preview is public — no auth needed, but use apiCall for retry logic
+    // Preview is public — no auth needed, but use the shared transport for retry/native logic
     try {
       await readingClubAuth.wakeUpServer();
-      const resp = await fetch(`${readingClubAuth.API_BASE}/invites/preview/${token}`, {
-        signal: AbortSignal.timeout(30000)
-      });
-      const data = await resp.json();
-      return { ok: true, data: data as ClubInvitePreviewData };
+      return await readingClubAuth.publicGet<ClubInvitePreviewData>(`/invites/preview/${token}`, 30000);
     } catch (e: any) {
       return { ok: false, error: e.message, data: undefined };
     }
