@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, ArrowRight, User } from 'lucide-react';
+import { ArrowLeft, ArrowRight, User, Loader2 } from 'lucide-react';
 import { ClubUserProfile, ReadingClub, ClubView } from '../../types/readingClub';
 import { readingClubAuth } from '../../services/readingClubAuth';
 import { clubGroupsAPI } from '../../services/readingClubAPI';
@@ -15,7 +15,7 @@ import ClubQuotes from './ClubQuotes';
 import ClubStages from './ClubStages';
 import ClubMembers from './ClubMembers';
 import ClubInvitePreview from './ClubInvitePreview';
-
+import ClubSettings from './ClubSettings';
 
 const MotionDiv = motion.div as any;
 
@@ -24,14 +24,16 @@ interface ReadingClubRootProps {
   books: any[];
   onBack: () => void;
   inviteToken?: string;
+  onOpenReader?: (book: any) => void;
 }
 
-export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: ReadingClubRootProps) {
-  const [view, setView] = useState<ClubView>('setup');
+export default function ReadingClubRoot({ lang, books, onBack, inviteToken, onOpenReader }: ReadingClubRootProps) {
+  const [view, setView] = useState<ClubView>('list');
   const [profile, setProfile] = useState<ClubUserProfile | null>(null);
   const [selectedClub, setSelectedClub] = useState<ReadingClub | null>(null);
   const [clubs, setClubs] = useState<ReadingClub[]>([]);
   const [loading, setLoading] = useState(true);
+  const [initializing, setInitializing] = useState(true);
   const [inviteTokenState, setInviteTokenState] = useState<string | undefined>(inviteToken);
   
   const isRTL = lang === 'ar';
@@ -39,9 +41,17 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
     title: isRTL ? 'نادي القراءة' : 'Reading Club'
   };
 
+  // Sync inviteToken prop
+  useEffect(() => {
+    if (inviteToken !== inviteTokenState) {
+      setInviteTokenState(inviteToken);
+    }
+  }, [inviteToken]);
+
   useEffect(() => {
     const loadProfile = async () => {
       setLoading(true);
+      setInitializing(true);
       if (readingClubAuth.isLoggedIn()) {
         const userProfile = readingClubAuth.getLocalProfile();
         if (userProfile) {
@@ -65,6 +75,7 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
         setView('setup');
       }
       setLoading(false);
+      setInitializing(false);
     };
     loadProfile();
 
@@ -88,6 +99,9 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
         onBack();
       } else if (view === 'page' || view === 'create') {
         setView('list');
+      } else if (view === 'settings') {
+        setView('page');
+        return;
       } else if (view !== 'setup') {
         setView('page');
       }
@@ -102,7 +116,15 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
   };
 
   const isOwner = selectedClub?.myRole === 'owner' || selectedClub?.ownerId === profile?.id;
-  const isAdmin = isOwner || ['full_admin','content_admin','member_admin','discussion_mod'].includes(selectedClub?.myRole || '');
+
+  // Show loading screen during initial load instead of flashing setup
+  if (loading) {
+    return (
+      <div className="w-full h-full bg-[#000a00] text-white flex items-center justify-center">
+        <Loader2 className="animate-spin text-red-600" size={40} />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full bg-[#000a00] text-white flex flex-col font-black uppercase tracking-widest" dir={isRTL ? 'rtl' : 'ltr'}>
@@ -111,6 +133,7 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
           <button onClick={() => {
             if (view === 'list' || view === 'invite-preview') onBack();
             else if (view === 'page' || view === 'create') setView('list');
+            else if (view === 'settings') setView('page');
             else setView('page');
           }} className="p-2 bg-white/5 rounded-full text-red-600">
             {isRTL ? <ArrowRight size={20} /> : <ArrowLeft size={20} />}
@@ -163,7 +186,8 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
                 userProfile={profile} 
                 onCreateClub={() => setView('create')} 
                 onSelectClub={(c) => { setSelectedClub(c); setView('page'); }} 
-                onRefresh={refreshClubs} 
+                onRefresh={refreshClubs}
+                loading={loading}
               />
             </MotionDiv>
           )}
@@ -178,7 +202,20 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
           )}
           {view === 'page' && profile && selectedClub && (
             <MotionDiv key="page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <ClubPage lang={lang} club={selectedClub} userProfile={profile} onBack={() => setView('list')} onNavigate={handleNavigate} />
+              <ClubPage 
+                lang={lang} 
+                club={selectedClub} 
+                userProfile={profile} 
+                onBack={() => setView('list')} 
+                onNavigate={handleNavigate}
+                books={books}
+                onOpenReader={onOpenReader}
+                onClubLeft={() => {
+                  setClubs(clubs.filter(c => c._id !== selectedClub._id));
+                  setSelectedClub(null);
+                  setView('list');
+                }}
+              />
             </MotionDiv>
           )}
           {view === 'discussion' && profile && selectedClub && (
@@ -199,6 +236,22 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken }: Re
           {view === 'members' && profile && selectedClub && (
             <MotionDiv key="members" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
               <ClubMembers lang={lang} club={selectedClub} userProfile={profile} isOwner={isOwner} onBack={() => setView('page')} />
+            </MotionDiv>
+          )}
+          {view === 'settings' && profile && selectedClub && (
+            <MotionDiv key="settings" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+              <ClubSettings lang={lang} club={selectedClub} userProfile={profile} isOwner={isOwner} books={books}
+                onBack={() => setView('page')}
+                onClubUpdated={(updated) => {
+                  setSelectedClub(updated);
+                  setClubs(prev => prev.map(c => c._id === updated._id ? updated : c));
+                }}
+                onClubDeleted={() => {
+                  setClubs(prev => prev.filter(c => c._id !== selectedClub._id));
+                  setSelectedClub(null);
+                  setView('list');
+                }}
+              />
             </MotionDiv>
           )}
         </AnimatePresence>
