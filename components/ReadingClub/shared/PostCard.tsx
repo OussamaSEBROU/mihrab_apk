@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { MessageCircle, Heart, ThumbsUp, Star, Bookmark, Pin, Edit3, Trash2, Flag, Reply, Clock, AlertTriangle } from 'lucide-react';
-import type { ClubPost } from '../../types/readingClub';
-import { getPostAuthorNickname, getPostAuthorAvatar, getPostAuthorId } from '../../types/readingClub';
+import { Pin, Edit3, Trash2, Flag, Reply, Clock, AlertTriangle } from 'lucide-react';
+import type { ClubPost } from '../../../types/readingClub';
+import { getPostAuthorNickname, getPostAuthorAvatar, getPostAuthorId } from '../../../types/readingClub';
 import SpoilerGuard from './SpoilerGuard';
 
 const MotionDiv = motion.div as any;
@@ -25,7 +25,6 @@ interface PostCardProps {
 }
 
 export default function PostCard({ lang, post, currentUserId, onReact, onReply, onEdit, onDelete, onPin, onReport, isAdmin }: PostCardProps) {
-  const [showActions, setShowActions] = useState(false);
   const isRTL = lang === 'ar';
   const isAuthor = getPostAuthorId(post) === currentUserId;
   const authorNick = getPostAuthorNickname(post);
@@ -52,20 +51,15 @@ export default function PostCard({ lang, post, currentUserId, onReact, onReply, 
 
   const postBody = (
     <div className="space-y-2">
-      {/* Reply reference */}
       {replyPreview && (
-        <div className={`border-${isRTL ? 'r' : 'l'}-2 border-red-600/50 ${isRTL ? 'pr-0 pl-3' : 'pl-3 pr-0'} py-1 opacity-60`}>
+        <div className={`${isRTL ? 'border-r-2 pr-3' : 'border-l-2 pl-3'} border-red-600/50 py-1 opacity-60`}>
           <p className="text-[8px] text-red-400">{typeof replyPreview.authorId === 'object' ? replyPreview.authorId.nickname : ''}</p>
           <p className="text-[9px] text-white/50 line-clamp-1">{replyPreview.body?.substring(0, 80)}</p>
         </div>
       )}
-
-      {/* Message body */}
       <p className="text-[11px] font-normal normal-case tracking-normal leading-relaxed text-white/90 whitespace-pre-wrap break-words">
         {content}
       </p>
-
-      {/* Page reference */}
       {post.pageReference && (
         <span className="inline-block text-[8px] bg-red-600/20 text-red-400 px-2 py-0.5 rounded-full">
           {isRTL ? `ص ${post.pageReference}` : `p.${post.pageReference}`}
@@ -79,8 +73,6 @@ export default function PostCard({ lang, post, currentUserId, onReact, onReply, 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className={`p-3 rounded-xl border border-white/5 ${isAuthor ? 'bg-red-950/20 border-red-600/10' : 'bg-white/[0.03]'} ${post._sending ? 'opacity-60' : ''} ${post._failed ? 'border-red-500/30' : ''}`}
-      onLongPress={() => setShowActions(true)}
-      onClick={() => showActions && setShowActions(false)}
     >
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
@@ -149,6 +141,11 @@ export default function PostCard({ lang, post, currentUserId, onReact, onReply, 
         {isAdmin && onPin && (
           <button onClick={() => onPin(post._id)} className={`p-1 rounded-lg hover:bg-white/5 ${post.isPinned ? 'text-yellow-500' : 'text-white/30'}`}>
             <Pin size={12} />
+          </button>
+        )}
+        {onReport && !isAuthor && (
+          <button onClick={() => onReport(post._id)} className="p-1 rounded-lg hover:bg-white/5 text-white/30">
+            <Flag size={12} />
           </button>
         )}
       </div>
