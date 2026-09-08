@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, Loader2, Users, BookOpen, AlertCircle, CheckCircle } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Loader2, Users, BookOpen, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 import { clubInvitesAPI } from '../../services/readingClubAPI';
 
@@ -22,27 +22,31 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
   const [isJoining, setIsJoining] = useState(false);
   const [joinStatus, setJoinStatus] = useState('');
 
-  useEffect(() => {
-    const fetchPreview = async () => {
-      try {
-        const res = await clubInvitesAPI.preview(inviteToken);
-        if (res.ok && res.data) {
-          setPreview(res.data);
-        } else {
-          setError(res.error || 'Invalid or expired invite link');
-        }
-      } catch (err: any) {
-        setError('Invalid or expired invite link');
-      } finally {
-        setIsLoading(false);
+  const fetchPreview = async () => {
+    setIsLoading(true);
+    setError('');
+    try {
+      const res = await clubInvitesAPI.preview(inviteToken);
+      if (res.ok && res.data) {
+        setPreview(res.data);
+      } else {
+        setError(res.error || (isRTL ? 'رابط الدعوة غير صالح أو منتهي' : 'Invalid or expired invite link'));
       }
-    };
+    } catch (err: any) {
+      setError(isRTL ? 'رابط الدعوة غير صالح أو منتهي' : 'Invalid or expired invite link');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchPreview();
   }, [inviteToken]);
 
   const handleJoin = async () => {
     if (!userProfile) return;
     setIsJoining(true);
+    setError('');
     try {
       const res = await clubInvitesAPI.join(inviteToken);
       if (res.ok && res.data) {
@@ -50,19 +54,21 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
           setJoinStatus('pending');
         } else if (res.data.group) {
           onJoined(res.data.group);
+        } else {
+          onBack();
         }
       } else {
-        setError(res.error || 'Failed to join club');
+        setError(res.error || (isRTL ? 'فشل الانضمام للنادي' : 'Failed to join club'));
       }
     } catch (err: any) {
-      setError('Failed to join club');
+      setError(isRTL ? 'فشل الانضمام للنادي' : 'Failed to join club');
     } finally {
       setIsJoining(false);
     }
   };
 
   return (
-    <div className={`flex flex-col h-full bg-[#000a00] text-white ${isRTL ? 'dir-rtl' : 'dir-ltr'}`}>
+    <div className="flex flex-col h-full bg-[#000a00] text-white" dir={isRTL ? 'rtl' : 'ltr'}>
       <div className="p-4">
         <button onClick={onBack} className="text-red-600 p-2 hover:bg-red-900/20 rounded-full">
           {isRTL ? <ArrowRight size={24} /> : <ArrowLeft size={24} />}
@@ -72,11 +78,15 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
       <div className="flex-1 flex items-center justify-center p-6">
         {isLoading ? (
           <Loader2 className="animate-spin text-red-600" size={48} />
-        ) : error ? (
+        ) : error && !preview ? (
           <MotionDiv initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-red-900/20 border border-red-600/50 rounded-2xl p-8 text-center max-w-sm w-full">
             <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
             <h2 className="font-black uppercase tracking-widest text-lg mb-2 text-red-500">{isRTL ? 'خطأ' : 'Error'}</h2>
-            <p className="text-gray-300 text-sm">{error}</p>
+            <p className="text-gray-300 text-sm mb-6">{error}</p>
+            <button onClick={fetchPreview} className="w-full bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-widest py-3 rounded-xl flex items-center justify-center gap-2 transition-colors">
+              <RefreshCw size={20} />
+              {isRTL ? 'حاول مرة أخرى' : 'Try Again'}
+            </button>
           </MotionDiv>
         ) : joinStatus === 'pending' ? (
           <MotionDiv initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-gray-900 border border-green-600/50 rounded-2xl p-8 text-center max-w-sm w-full">
@@ -89,20 +99,33 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-900 via-red-600 to-red-900"></div>
             
             <div className="text-center mb-8">
-              <h1 className="text-2xl font-black uppercase tracking-widest mb-2">{preview.name}</h1>
-              {preview.description && <p className="text-gray-400 text-sm">{preview.description}</p>}
+              {preview.group?.avatarUrl && (
+                <img src={preview.group.avatarUrl} alt="Club Avatar" className="w-20 h-20 rounded-full mx-auto mb-4 border-2 border-red-600/50 object-cover" />
+              )}
+              <h1 className="text-2xl font-black uppercase tracking-widest mb-2">{preview.group?.name || ''}</h1>
+              {preview.group?.description && <p className="text-gray-400 text-sm">{preview.group?.description}</p>}
             </div>
 
             <div className="space-y-4 mb-8">
               <div className="flex items-center gap-3 bg-black/50 p-3 rounded-xl border border-gray-800/50">
                 <BookOpen className="text-red-600" size={20} />
-                <span className="text-sm font-bold text-gray-300">{preview.bookTitle || (isRTL ? 'كتاب غير محدد' : 'Unknown Book')}</span>
+                <span className="text-sm font-bold text-gray-300">{preview.group?.currentBookTitle || (isRTL ? 'كتاب غير محدد' : 'No book set')}</span>
               </div>
               <div className="flex items-center gap-3 bg-black/50 p-3 rounded-xl border border-gray-800/50">
                 <Users className="text-red-600" size={20} />
-                <span className="text-sm font-bold text-gray-300">{preview.memberCount} {isRTL ? 'أعضاء' : 'Members'}</span>
+                <span className="text-sm font-bold text-gray-300">{preview.group?.memberCount || 0} {isRTL ? 'أعضاء' : 'Members'}</span>
               </div>
             </div>
+
+            {error && (
+              <div className="mb-4 text-center text-red-500 text-sm font-bold bg-red-900/20 p-3 rounded-xl border border-red-500/50 flex flex-col items-center gap-2">
+                <span>{error}</span>
+                <button onClick={() => setError('')} className="flex items-center gap-1 text-xs bg-red-600/20 px-3 py-1 rounded-full hover:bg-red-600/40">
+                  <RefreshCw size={12} />
+                  {isRTL ? 'إخفاء الخطأ' : 'Dismiss'}
+                </button>
+              </div>
+            )}
 
             {!userProfile ? (
               <div className="text-center text-yellow-500 text-sm font-bold bg-yellow-900/20 p-4 rounded-xl">
