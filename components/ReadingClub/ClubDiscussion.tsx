@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Send, MessageCircle, HelpCircle, Star, Quote, EyeOff, Loader2, Pin, Edit3, CornerUpLeft, X } from 'lucide-react';
-import { ReadingClub, ClubUserProfile, ClubMessage, getPostAuthorNickname, getPostAuthorAvatar, getPostAuthorId } from '../../types/readingClub';
+import { ReadingClub, ClubUserProfile, ClubPost, getPostAuthorNickname, getPostAuthorAvatar, getPostAuthorId } from '../../types/readingClub';
 import { clubMessagesAPI } from '../../services/readingClubAPI';
 import { readingClubSync } from '../../services/readingClubSync';
+import SpoilerGuard from './shared/SpoilerGuard';
 
 const MotionDiv = motion.div as any;
+
+const AVATARS = ['📖','🌙','⭐','🔥','🌿','💎','🦋','🌸','🏔️','🌊','🎭','🕌'];
 
 interface Props {
   lang: 'ar' | 'en';
@@ -16,20 +19,28 @@ interface Props {
 
 export default function ClubDiscussion({ lang, club, userProfile, onBack }: Props) {
   const isRTL = lang === 'ar';
-  const [messages, setMessages] = useState<ClubMessage[]>([]);
+  const [messages, setMessages] = useState<ClubPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [body, setBody] = useState('');
   const [type, setType] = useState<'thought'|'question'|'review'|'quote'>('thought');
   const [spoilerLevel, setSpoilerLevel] = useState<0|1|2>(0);
-  const [replyTo, setReplyTo] = useState<ClubMessage | null>(null);
+  const [replyTo, setReplyTo] = useState<ClubPost | null>(null);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [pendingBody, setPendingBody] = useState<string | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
     const fetchMessages = async () => {
       try {
         const res = await clubMessagesAPI.list(club._id);
-        setMessages(res.data.reverse());
+        if (res.ok && res.data?.messages) {
+          setMessages(res.data.messages.reverse());
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -40,35 +51,34 @@ export default function ClubDiscussion({ lang, club, userProfile, onBack }: Prop
     fetchMessages();
     readingClubSync.joinRoom(club._id);
 
-    readingClubSync.onNewMessage((msg: ClubMessage) => {
+    readingClubSync.onNewMessage((msg: ClubPost) => {
       setMessages(prev => [...prev, msg]);
       setTimeout(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
       }, 100);
     });
 
-    readingClubSync.onMessageUpdated((updated: ClubMessage) => {
+    readingClubSync.onMessageUpdated((updated: ClubPost) => {
       setMessages(prev => prev.map(m => m._id === updated._id ? updated : m));
     });
 
-    readingClubSync.onMessageDeleted((msgId: string) => {
-      setMessages(prev => prev.filter(m => m._id !== msgId));
+    readingClubSync.onMessageDeleted((data: { messageId: string }) => {
+      setMessages(prev => prev.filter(m => m._id !== data.messageId));
     });
 
-    readingClubSync.onUserTyping((data: { userId: string; nickname: string; isTyping: boolean }) => {
-      setTypingUsers(prev => {
-        if (data.isTyping) {
-          return [...new Set([...prev, data.nickname])];
-        }
-        return prev.filter(n => n !== data.nickname);
-      });
+    readingClubSync.onUserTyping((data: { userId: string; nickname: string; groupId: string }) => {
+      if (data.userId === (userProfile.id || userProfile.serverUserId)) return;
+      setTypingUsers(prev => [...new Set([...prev, data.nickname])]);
+      setTimeout(() => {
+        setTypingUsers(prev => prev.filter(n => n !== data.nickname));
+      }, 3000);
     });
 
     return () => {
       readingClubSync.leaveRoom(club._id);
       readingClubSync.offAll();
     };
-  }, [club._id]);
+  }, [club._id, userProfile.id, userProfile.serverUserId]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -76,39 +86,60 @@ export default function ClubDiscussion({ lang, club, userProfile, onBack }: Prop
     }
   }, [isLoading]);
 
-  let typingTimeout: any;
   const handleBodyChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setBody(e.target.value);
     readingClubSync.sendTyping(club._id, true);
-    clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => {
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
       readingClubSync.sendTyping(club._id, false);
     }, 2000);
   };
 
   const handleSend = async () => {
-    if (!body.trim()) return;
+    if (!body.trim() || sending) return;
+    const msgBody = body;
+    const msgReplyTo = replyTo;
+    const msgType = type;
+    const msgSpoiler = spoilerLevel;
+    const opId = crypto.randomUUID();
     
-    const newMsgBody = body;
+    setSending(true);
+    setSendError(null);
     setBody('');
     setReplyTo(null);
     setSpoilerLevel(0);
     readingClubSync.sendTyping(club._id, false);
     
     try {
-      await clubMessagesAPI.create(club._id, {
-        body: newMsgBody,
-        type,
-        spoilerLevel,
-        replyToId: replyTo?._id,
+      const res = await clubMessagesAPI.send(club._id, {
+        body: msgBody,
+        type: msgType,
+        spoilerLevel: msgSpoiler,
+        replyToMessageId: msgReplyTo?._id,
+        clientOperationId: opId,
       });
+      if (!res.ok) {
+        setSendError(res.error || 'Failed');
+        setPendingBody(msgBody);
+      }
     } catch (err) {
-      console.error(err);
+      setSendError('Network error');
+      setPendingBody(msgBody);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleRetry = () => {
+    if (pendingBody) {
+      setBody(pendingBody);
+      setPendingBody(null);
+      setSendError(null);
     }
   };
 
   return (
-    <div className={`flex flex-col h-full bg-[#000a00] text-white ${isRTL ? 'dir-rtl' : 'dir-ltr'}`}>
+    <div dir={isRTL ? 'rtl' : 'ltr'} className="flex flex-col h-full bg-[#000a00] text-white">
       <div className="flex items-center justify-between p-4 border-b border-red-900/30">
         <button onClick={onBack} className="text-red-600 p-2 hover:bg-red-900/20 rounded-full">
           {isRTL ? <ArrowRight size={24} /> : <ArrowLeft size={24} />}
@@ -126,7 +157,7 @@ export default function ClubDiscussion({ lang, club, userProfile, onBack }: Prop
           </div>
         ) : (
           messages.map(msg => {
-            const isMe = getPostAuthorId(msg) === userProfile.userId;
+            const isMe = getPostAuthorId(msg) === (userProfile.id || userProfile.serverUserId);
             return (
               <MotionDiv
                 initial={{ opacity: 0, y: 10 }}
@@ -137,20 +168,21 @@ export default function ClubDiscussion({ lang, club, userProfile, onBack }: Prop
                 <div className={`max-w-[85%] rounded-2xl p-3 ${isMe ? 'bg-red-900/30 border border-red-600/30' : 'bg-gray-900 border border-gray-800'}`}>
                   {!isMe && (
                     <div className="flex items-center gap-2 mb-1">
-                      <img src={getPostAuthorAvatar(msg) || '/default-avatar.png'} alt="" className="w-5 h-5 rounded-full" />
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center bg-gray-800 text-xs">
+                        {AVATARS[getPostAuthorAvatar(msg)] || '📖'}
+                      </div>
                       <span className="text-xs text-red-500 font-black uppercase tracking-widest">{getPostAuthorNickname(msg)}</span>
                     </div>
                   )}
-                  {msg.replyToId && (
+                  {(msg as any).replyToId && (
                     <div className="text-xs bg-black/30 p-2 rounded mb-2 border-l-2 border-red-600 text-gray-400">
                       {isRTL ? 'رد على رسالة' : 'Replying to a message'}
                     </div>
                   )}
                   {msg.spoilerLevel > 0 ? (
-                    <div className="flex items-center gap-2 text-yellow-500 bg-yellow-500/10 p-2 rounded">
-                      <EyeOff size={16} />
-                      <span className="text-sm font-bold">{isRTL ? 'حرق أحداث' : 'Spoiler'}</span>
-                    </div>
+                    <SpoilerGuard lang={lang}>
+                      <p className="text-sm">{msg.body}</p>
+                    </SpoilerGuard>
                   ) : (
                     <p className="text-sm">{msg.body}</p>
                   )}
@@ -197,10 +229,16 @@ export default function ClubDiscussion({ lang, club, userProfile, onBack }: Prop
             rows={1}
             dir={isRTL ? 'rtl' : 'ltr'}
           />
-          <button onClick={handleSend} disabled={!body.trim()} className="bg-red-600 text-white p-3 rounded-xl disabled:opacity-50">
-            <Send size={20} className={isRTL ? 'rotate-180' : ''} />
+          <button onClick={handleSend} disabled={!body.trim() || sending} className="bg-red-600 text-white p-3 rounded-xl disabled:opacity-50">
+            {sending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} className={isRTL ? 'rotate-180' : ''} />}
           </button>
         </div>
+        {sendError && (
+          <div className="bg-red-900/50 p-2 text-red-500 text-xs flex justify-between items-center rounded mt-2">
+            <span>{sendError}</span>
+            <button onClick={handleRetry} className="underline uppercase tracking-widest font-black">{lang === 'ar' ? 'إعادة المحاولة' : 'Retry'}</button>
+          </div>
+        )}
       </div>
     </div>
   );
