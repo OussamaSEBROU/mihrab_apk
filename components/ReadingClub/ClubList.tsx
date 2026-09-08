@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Users, BookOpen, RefreshCw, Lock, Globe, User } from 'lucide-react';
-import { ReadingClub, ClubUserProfile, ClubGroup } from '../../types/readingClub';
+import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 
 const MotionDiv = motion.div as any;
 
@@ -36,18 +36,28 @@ export const ClubList: React.FC<ClubListProps> = ({
   };
 
   const getRoleBadge = (role: string) => {
-    const roleColors = {
+    const roleColors: Record<string, string> = {
       owner: 'bg-red-900/50 text-red-400 border-red-500/30',
+      full_admin: 'bg-yellow-900/50 text-yellow-400 border-yellow-500/30',
+      content_admin: 'bg-yellow-900/40 text-yellow-300 border-yellow-500/20',
+      member_admin: 'bg-amber-900/40 text-amber-300 border-amber-500/20',
+      discussion_mod: 'bg-orange-900/40 text-orange-300 border-orange-500/20',
       admin: 'bg-yellow-900/50 text-yellow-400 border-yellow-500/30',
-      member: 'bg-gray-800 text-gray-300 border-gray-600'
+      member: 'bg-gray-800 text-gray-300 border-gray-600',
+      readonly: 'bg-gray-800/50 text-gray-400 border-gray-700',
     };
-    const roleLabels = {
+    const roleLabels: Record<string, string> = {
       owner: lang === 'ar' ? 'مالك' : 'OWNER',
+      full_admin: lang === 'ar' ? 'مشرف أول' : 'ADMIN',
+      content_admin: lang === 'ar' ? 'مشرف محتوى' : 'CONTENT MOD',
+      member_admin: lang === 'ar' ? 'مشرف أعضاء' : 'MEMBER MOD',
+      discussion_mod: lang === 'ar' ? 'مشرف نقاش' : 'DISCUSSION MOD',
       admin: lang === 'ar' ? 'مشرف' : 'ADMIN',
-      member: lang === 'ar' ? 'عضو' : 'MEMBER'
+      member: lang === 'ar' ? 'عضو' : 'MEMBER',
+      readonly: lang === 'ar' ? 'قراءة فقط' : 'READ ONLY',
     };
-    const style = roleColors[role as keyof typeof roleColors] || roleColors.member;
-    const label = roleLabels[role as keyof typeof roleLabels] || roleLabels.member;
+    const style = roleColors[role] || roleColors.member;
+    const label = roleLabels[role] || roleLabels.member;
     
     return (
       <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${style}`}>
@@ -117,13 +127,13 @@ export const ClubList: React.FC<ClubListProps> = ({
                   onClick={() => onSelectClub(club)}
                   className="bg-black/40 border border-white/10 hover:border-red-500/50 rounded-xl p-4 cursor-pointer transition-all hover:bg-white/5 relative overflow-hidden group"
                 >
-                  <div className="absolute top-0 left-0 w-1 h-full bg-red-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className={`absolute top-0 ${isRTL ? 'right-0 w-1' : 'left-0 w-1'} h-full bg-red-600 opacity-0 group-hover:opacity-100 transition-opacity`} />
                   
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="font-bold text-lg text-white group-hover:text-red-400 transition-colors">
                       {club.name}
                     </h3>
-                    <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                    <div className="flex items-center gap-2">
                       {getRoleBadge(club.myRole || 'member')}
                       <span className="text-gray-500" title={club.privacy}>
                         {getPrivacyIcon(club.privacy || 'private')}
@@ -138,12 +148,12 @@ export const ClubList: React.FC<ClubListProps> = ({
                   )}
                   
                   <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-gray-500">
-                    <div className="flex items-center space-x-1 rtl:space-x-reverse">
+                    <div className="flex items-center gap-1">
                       <Users className="w-4 h-4" />
                       <span>{club.memberCount || 1} {lang === 'ar' ? 'أعضاء' : 'MEMBERS'}</span>
                     </div>
                     {club.currentBookTitle && (
-                      <div className="flex items-center space-x-1 rtl:space-x-reverse max-w-[50%]">
+                      <div className="flex items-center gap-1 max-w-[50%]">
                         <BookOpen className="w-4 h-4 shrink-0" />
                         <span className="truncate">{club.currentBookTitle}</span>
                       </div>
@@ -159,7 +169,7 @@ export const ClubList: React.FC<ClubListProps> = ({
       {clubs.length > 0 && (
         <button
           onClick={onCreateClub}
-          className="absolute bottom-6 right-6 left-auto rtl:right-auto rtl:left-6 w-14 h-14 bg-red-600 hover:bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 transition-transform hover:scale-105 active:scale-95"
+          className={`absolute bottom-6 ${isRTL ? 'left-6' : 'right-6'} w-14 h-14 bg-red-600 hover:bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-red-900/50 transition-transform hover:scale-105 active:scale-95`}
         >
           <Plus className="w-6 h-6" />
         </button>
