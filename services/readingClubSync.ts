@@ -42,6 +42,13 @@ const connect = (): Socket | null => {
   socket.on('connect', () => {
     console.log('🔌 [ClubSync] Connected to clubs server');
     _isConnecting = false;
+    // Re-attach all registered event listeners after reconnect
+    _listeners.forEach((handlers, event) => {
+      handlers.forEach(handler => {
+        socket?.off(event, handler); // Prevent duplicates
+        socket?.on(event, handler);
+      });
+    });
   });
 
   socket.on('disconnect', (reason) => {
@@ -54,7 +61,7 @@ const connect = (): Socket | null => {
     _isConnecting = false;
   });
 
-  // Re-attach all registered event listeners
+  // Attach initial listeners
   _listeners.forEach((handlers, event) => {
     handlers.forEach(handler => {
       socket?.on(event, handler);
@@ -92,8 +99,8 @@ const leaveRoom = (groupId: string) => {
   if (socket?.connected) socket.emit('club:leave_room', groupId);
 };
 
-const sendTyping = (groupId: string) => {
-  if (socket?.connected) socket.emit('club:typing', groupId);
+const sendTyping = (groupId: string, isTyping: boolean = true) => {
+  if (socket?.connected) socket.emit('club:typing', { groupId, isTyping });
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -102,7 +109,10 @@ const sendTyping = (groupId: string) => {
 const on = (event: string, handler: EventHandler) => {
   if (!_listeners.has(event)) _listeners.set(event, new Set());
   _listeners.get(event)!.add(handler);
-  if (socket) socket.on(event, handler);
+  if (socket) {
+    socket.off(event, handler); // Prevent duplicate
+    socket.on(event, handler);
+  }
 };
 
 const off = (event: string, handler: EventHandler) => {
@@ -110,9 +120,18 @@ const off = (event: string, handler: EventHandler) => {
   if (socket) socket.off(event, handler);
 };
 
-const offAll = (event: string) => {
-  _listeners.delete(event);
-  if (socket) socket.removeAllListeners(event);
+/**
+ * offAll() — clears all listeners (no arguments required)
+ * offAll(event) — clears listeners for a specific event
+ */
+const offAll = (event?: string) => {
+  if (event) {
+    _listeners.delete(event);
+    if (socket) socket.removeAllListeners(event);
+  } else {
+    _listeners.clear();
+    if (socket) socket.removeAllListeners();
+  }
 };
 
 // ══════════════════════════════════════════════════════════════
