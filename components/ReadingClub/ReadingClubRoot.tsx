@@ -188,6 +188,10 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken, onOp
                 onSelectClub={(c) => { setSelectedClub(c); setView('page'); }} 
                 onRefresh={refreshClubs}
                 loading={loading}
+                onJoinWithToken={(token) => {
+                  setInviteTokenState(token);
+                  setView('invite-preview');
+                }}
               />
             </MotionDiv>
           )}
