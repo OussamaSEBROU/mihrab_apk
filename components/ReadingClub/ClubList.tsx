@@ -224,8 +224,8 @@ export const ClubList: React.FC<ClubListProps> = ({
       </div>
 
       {/* ══════════════════════════════════════════════════ */}
-      /* Floating Action Buttons — Create + Join           */
-      /* ══════════════════════════════════════════════════ */}
+      {/* Floating Action Buttons — Create + Join           */}
+      {/* ══════════════════════════════════════════════════ */}
       {clubs.length > 0 && (
         <div className={`absolute bottom-6 ${isRTL ? 'left-6' : 'right-6'} flex flex-col gap-3`}>
           {/* Join Club FAB */}
@@ -248,8 +248,8 @@ export const ClubList: React.FC<ClubListProps> = ({
       )}
 
       {/* ══════════════════════════════════════════════════ */}
-      /* Join Modal — paste invite link or code             */
-      /* ══════════════════════════════════════════════════ */}
+      {/* Join Modal — paste invite link or code             */}
+      {/* ══════════════════════════════════════════════════ */}
       {showJoinModal && (
         <div className="fixed inset-0 z-[11000] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl">
           <MotionDiv
