@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
 import { ArrowLeft, Save, Globe, Lock, User, Loader2, AlertCircle } from 'lucide-react';
 import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 import { clubGroupsAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
-
-const MotionDiv = motion.div as any;
 
 interface ClubCreateProps {
   lang: 'ar' | 'en';
@@ -59,15 +56,18 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
     setError(null);
     
     try {
+      const selectedBook = bookId ? books.find((b: any) => b.id === bookId || b._id === bookId) : null;
       const response = await clubGroupsAPI.create({
         name: name.trim(),
         description: description.trim(),
         privacy,
-        settings: {
-          joinApprovalRequired,
-          maxMembers
-        },
-        currentBookId: bookId || undefined
+        maxMembers,
+        joinApprovalRequired,
+        currentBookId: bookId || undefined,
+        currentBookTitle: selectedBook?.title || undefined,
+        currentBookAuthor: selectedBook?.author || undefined,
+        bookVisibleToMembers: !!bookId,
+        bookReadableByMembers: !!bookId,
       });
       
       if (response.ok && response.data) {
