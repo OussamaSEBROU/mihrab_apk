@@ -107,7 +107,6 @@ const apiCall = async <T>(
 
       let resp: Response;
       if (isNative()) {
-        // Native transport: no WebView CORS/CSP interception on device
         const { status, data } = await nativeRequest<T>(endpoint, options, headers, 30000);
         resp = new Response(JSON.stringify(data ?? {}), { status });
       } else {
@@ -162,10 +161,6 @@ export const readingClubAuth = {
   getLocalProfile,
   isLoggedIn: (): boolean => !!getToken() && !!getLocalProfile(),
 
-  /**
-   * Register or re-login with deviceId + nickname + avatarIndex
-   * Returns recoveryCode ONLY on first registration
-   */
   register: async (nickname: string, avatarIndex: number): Promise<{
     success: boolean;
     profile?: ClubUserProfile;
@@ -211,20 +206,13 @@ export const readingClubAuth = {
     }
   },
 
-  /**
-   * Verify the current token is still valid
-   */
   verify: async (): Promise<boolean> => {
     const token = getToken();
     if (!token) return false;
-
     const result = await apiCall<{ valid: boolean }>('/auth/verify', { method: 'POST' });
     return result.ok && result.data?.valid === true;
   },
 
-  /**
-   * Recover account with deviceId + recoveryCode
-   */
   recover: async (deviceId: string, recoveryCode: string): Promise<{
     success: boolean;
     profile?: ClubUserProfile;
@@ -259,9 +247,6 @@ export const readingClubAuth = {
     return { success: true, profile };
   },
 
-  /**
-   * Update profile (nickname, avatar)
-   */
   updateProfile: async (updates: { nickname?: string; avatarIndex?: number }): Promise<boolean> => {
     const result = await apiCall('/auth/profile', {
       method: 'PUT',
@@ -281,21 +266,17 @@ export const readingClubAuth = {
   },
 
   /**
-   * Logout — clear local data only
+   * Logout — clear local data + disconnect socket + clear recovery_shown
    */
   logout: () => {
     clearToken();
     clearLocalProfile();
+    localStorage.removeItem(RECOVERY_KEY);
+    // Socket disconnect is handled by readingClubSync.disconnect() at component level
   },
 
-  /**
-   * Generic authenticated API call — used by other services
-   */
   apiCall,
 
-  /**
-   * Public (unauthenticated) GET via the same transport — used by invite preview
-   */
   publicGet: async <T>(path: string, timeoutMs = 30000): Promise<{ ok: boolean; data?: T; error?: string }> => {
     try {
       if (isNative()) {
@@ -303,7 +284,11 @@ export const readingClubAuth = {
         if (status >= 200 && status < 300) return { ok: true, data };
         return { ok: false, error: `HTTP ${status}` };
       }
-      const resp = await fetch(`${CLUBS_API}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+      // Use AbortController instead of AbortSignal.timeout for wider compatibility
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+      const resp = await fetch(`${CLUBS_API}${path}`, { signal: ctrl.signal });
+      clearTimeout(tid);
       const data = await resp.json().catch(() => ({}));
       if (resp.ok) return { ok: true, data: data as T };
       return { ok: false, error: (data as any).error || `HTTP ${resp.status}` };
@@ -312,19 +297,10 @@ export const readingClubAuth = {
     }
   },
 
-  /**
-   * Wake up the server
-   */
   wakeUpServer,
 
-  /**
-   * Check if recovery code was shown to user
-   */
   wasRecoveryShown: (): boolean => localStorage.getItem(RECOVERY_KEY) === 'true',
   markRecoveryShown: () => localStorage.setItem(RECOVERY_KEY, 'true'),
 
-  /**
-   * API base URL
-   */
   API_BASE: CLUBS_API
 };
