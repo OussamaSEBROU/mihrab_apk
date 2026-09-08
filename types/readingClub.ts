@@ -67,6 +67,7 @@ export interface ReadingClub {
   avatarUrl?: string;
   pinnedMessageId?: string;
   inviteVersion: number;
+  inviteCode?: string;       // invite code for sharing
   myRole?: MemberRole;       // populated on /mine
   createdAt: string;
   updatedAt: string;
@@ -199,31 +200,48 @@ export interface AuditLogEntry {
   createdAt: string;
 }
 
+// Club group alias (used in some imports)
+export type ClubGroup = ReadingClub;
+
 // Internal navigation within Reading Club
 export type ClubView = 'list' | 'create' | 'page' | 'stages' | 'discussion' | 'quotes' | 'members' | 'settings' | 'admin' | 'audit' | 'invite-preview' | 'profile-setup';
 
-// Helper to extract nickname from populated userId
-export function getMemberNickname(member: ClubMember): string {
-  if (typeof member.userId === 'object' && member.userId.nickname) return member.userId.nickname;
+// ══════════════════════════════════════════════════════════════
+// NULL-SAFE HELPER FUNCTIONS
+// ══════════════════════════════════════════════════════════════
+
+export function getMemberNickname(member: ClubMember | null | undefined): string {
+  if (!member) return 'Unknown';
+  if (member.userId && typeof member.userId === 'object' && member.userId.nickname) return member.userId.nickname;
   return member.nickname || 'Unknown';
 }
-export function getMemberAvatar(member: ClubMember): number {
-  if (typeof member.userId === 'object' && member.userId.avatarIndex !== undefined) return member.userId.avatarIndex;
+
+export function getMemberAvatar(member: ClubMember | null | undefined): number {
+  if (!member) return 0;
+  if (member.userId && typeof member.userId === 'object' && member.userId.avatarIndex !== undefined) return member.userId.avatarIndex;
   return member.avatarIndex || 0;
 }
-export function getMemberId(member: ClubMember): string {
-  if (typeof member.userId === 'object') return member.userId._id;
-  return member.userId;
+
+export function getMemberId(member: ClubMember | null | undefined): string {
+  if (!member) return '';
+  if (member.userId && typeof member.userId === 'object') return member.userId._id;
+  return member.userId as string;
 }
-export function getPostAuthorNickname(post: ClubPost): string {
-  if (typeof post.authorId === 'object' && post.authorId.nickname) return post.authorId.nickname;
+
+export function getPostAuthorNickname(post: ClubPost | null | undefined): string {
+  if (!post) return 'Unknown';
+  if (post.authorId && typeof post.authorId === 'object' && post.authorId.nickname) return post.authorId.nickname;
   return post.authorNickname || 'Unknown';
 }
-export function getPostAuthorAvatar(post: ClubPost): number {
-  if (typeof post.authorId === 'object' && post.authorId.avatarIndex !== undefined) return post.authorId.avatarIndex;
+
+export function getPostAuthorAvatar(post: ClubPost | null | undefined): number {
+  if (!post) return 0;
+  if (post.authorId && typeof post.authorId === 'object' && post.authorId.avatarIndex !== undefined) return post.authorId.avatarIndex;
   return post.authorAvatarIndex || 0;
 }
-export function getPostAuthorId(post: ClubPost): string {
-  if (typeof post.authorId === 'object') return post.authorId._id;
-  return post.authorId;
+
+export function getPostAuthorId(post: ClubPost | null | undefined): string {
+  if (!post) return '';
+  if (post.authorId && typeof post.authorId === 'object') return post.authorId._id;
+  return post.authorId as string;
 }
