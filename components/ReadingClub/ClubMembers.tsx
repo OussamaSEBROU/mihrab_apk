@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, MoreVertical, Copy, Loader2, Check, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MoreVertical, Copy, Loader2, Check, X, Share2, Link2 } from 'lucide-react';
 import { ReadingClub, ClubUserProfile, ClubMember, getMemberNickname, getMemberAvatar, getMemberId } from '../../types/readingClub';
 import { clubMembersAPI, clubInvitesAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
@@ -18,18 +18,24 @@ interface Props {
 
 export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }: Props) {
   const isRTL = lang === 'ar';
+  const isOwnerOrAdmin = isOwner || ['owner', 'full_admin', 'content_admin', 'member_admin', 'admin'].includes(club.myRole || '');
+
   const [members, setMembers] = useState<ClubMember[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [copied, setCopied] = useState(false);
-  
   const [actionMemberId, setActionMemberId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
+    isOpen: boolean; title: string; message: string; onConfirm: () => void;
   } | null>(null);
+
+  // Invite link state
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  // Toast
+  const [toast, setToast] = useState('');
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 2000); };
 
   useEffect(() => {
     const load = async () => {
@@ -40,42 +46,74 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
           const reqRes = await clubInvitesAPI.getJoinRequests(club._id);
           setRequests(reqRes.data || []);
         }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsLoading(false);
-      }
+      } catch (err) { console.error(err); }
+      finally { setIsLoading(false); }
     };
     load();
   }, [club._id, isOwner]);
 
-  const copyInvite = () => {
-    if (club.inviteCode) {
-      navigator.clipboard.writeText(club.inviteCode);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  // ═══════════════════════════════════════════════════
+  // INVITE LINK — generate & copy
+  // ═══════════════════════════════════════════════════
+  const handleGenerateInvite = async () => {
+    if (inviteToken) return;
+    setGeneratingInvite(true);
+    try {
+      const res = await clubInvitesAPI.create(club._id);
+      if (res.ok && res.data) {
+        setInviteToken(res.data.token);
+      } else {
+        showToast(isRTL ? 'فشل إنشاء الرابط' : 'Failed to generate link');
+      }
+    } catch (err) { console.error(err); showToast(isRTL ? 'خطأ في الاتصال' : 'Network error'); }
+    finally { setGeneratingInvite(false); }
+  };
+
+  const copyInviteLink = () => {
+    if (!inviteToken) return;
+    const webUrl = `${window.location.origin}/join/${inviteToken}`;
+    navigator.clipboard.writeText(webUrl).then(() => {
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 2000);
+      showToast(isRTL ? 'تم نسخ الرابط' : 'Link copied');
+    }).catch(() => {
+      // Fallback: copy deep link
+      navigator.clipboard.writeText(`mihrab://club/invite/${inviteToken}`);
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 2000);
+    });
+  };
+
+  const shareInviteLink = () => {
+    if (!inviteToken) return;
+    const webUrl = `${window.location.origin}/join/${inviteToken}`;
+    const text = isRTL ? `انضم لنادي "${club.name}" على تطبيق محراب!` : `Join "${club.name}" on Mihrab!`;
+    if (navigator.share) {
+      navigator.share({ title: club.name, text, url: webUrl }).catch(() => {});
+    } else {
+      copyInviteLink();
     }
   };
 
+  // ═══════════════════════════════════════════════════
+  // MEMBER ACTIONS
+  // ═══════════════════════════════════════════════════
   const handleApprove = async (requestId: string) => {
     try {
       await clubInvitesAPI.handleJoinRequest(club._id, requestId, 'approve');
-      setRequests(requests.filter(req => req._id !== requestId));
-      // Refresh members list
+      setRequests(prev => prev.filter(r => r._id !== requestId));
       const memRes = await clubMembersAPI.list(club._id);
       setMembers(memRes.data || []);
-    } catch (err) {
-      console.error(err);
-    }
+      showToast(isRTL ? 'تم قبول العضو' : 'Member approved');
+    } catch (err) { console.error(err); }
   };
 
   const handleReject = async (requestId: string) => {
     try {
       await clubInvitesAPI.handleJoinRequest(club._id, requestId, 'reject');
-      setRequests(requests.filter(req => req._id !== requestId));
-    } catch (err) {
-      console.error(err);
-    }
+      setRequests(prev => prev.filter(r => r._id !== requestId));
+      showToast(isRTL ? 'تم رفض الطلب' : 'Request rejected');
+    } catch (err) { console.error(err); }
   };
 
   const handlePromote = async (memberId: string) => {
@@ -84,18 +122,16 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
       setActionMemberId(null);
       const memRes = await clubMembersAPI.list(club._id);
       setMembers(memRes.data || []);
-    } catch (err) {
-      console.error(err);
-    }
+      showToast(isRTL ? 'تمت الترقية' : 'Promoted');
+    } catch (err) { console.error(err); }
   };
 
   const handleMute = async (memberId: string) => {
     try {
       await clubMembersAPI.muteMember(club._id, memberId, 3600);
       setActionMemberId(null);
-    } catch (err) {
-      console.error(err);
-    }
+      showToast(isRTL ? 'تم كتم العضو لمدة ساعة' : 'Muted for 1 hour');
+    } catch (err) { console.error(err); }
   };
 
   const handleRemove = (memberId: string) => {
@@ -106,12 +142,10 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
       onConfirm: async () => {
         try {
           await clubMembersAPI.removeMember(club._id, memberId);
-          setMembers(members.filter(m => getMemberId(m) !== memberId));
-          setConfirmDialog(null);
-          setActionMemberId(null);
-        } catch (err) {
-          console.error(err);
-        }
+          setMembers(prev => prev.filter(m => getMemberId(m) !== memberId));
+          setConfirmDialog(null); setActionMemberId(null);
+          showToast(isRTL ? 'تم إزالة العضو' : 'Member removed');
+        } catch (err) { console.error(err); }
       }
     });
   };
@@ -124,12 +158,10 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
       onConfirm: async () => {
         try {
           await clubMembersAPI.banMember(club._id, memberId);
-          setMembers(members.filter(m => getMemberId(m) !== memberId));
-          setConfirmDialog(null);
-          setActionMemberId(null);
-        } catch (err) {
-          console.error(err);
-        }
+          setMembers(prev => prev.filter(m => getMemberId(m) !== memberId));
+          setConfirmDialog(null); setActionMemberId(null);
+          showToast(isRTL ? 'تم حظر العضو' : 'Member banned');
+        } catch (err) { console.error(err); }
       }
     });
   };
@@ -151,6 +183,7 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
 
   return (
     <div className="flex flex-col h-full bg-[#000a00] text-white" dir={isRTL ? 'rtl' : 'ltr'}>
+      {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-red-900/30">
         <button onClick={onBack} className="text-red-600 p-2 hover:bg-red-900/20 rounded-full">
           {isRTL ? <ArrowRight size={24} /> : <ArrowLeft size={24} />}
@@ -160,24 +193,76 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {isOwner && club.inviteCode && (
-          <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-4 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-red-500 font-black uppercase tracking-widest mb-1">
-                {isRTL ? 'رمز الدعوة' : 'Invite Code'}
-              </div>
-              <div className="font-mono text-lg">{club.inviteCode}</div>
+
+        {/* ═══ INVITE LINK SECTION — Owner/Admin ═══ */}
+        {isOwnerOrAdmin && club.privacy !== 'personal' && (
+          <div className="bg-red-900/10 border border-red-900/30 rounded-xl p-4">
+            <div className="text-xs text-red-500 font-black uppercase tracking-widest mb-3 flex items-center gap-2">
+              <Link2 size={14} />
+              {isRTL ? 'رابط الدعوة' : 'INVITE LINK'}
             </div>
-            <button onClick={copyInvite} className="p-2 bg-red-600 rounded-lg text-white">
-              {copied ? <Check size={20} /> : <Copy size={20} />}
-            </button>
+
+            {!inviteToken ? (
+              <button
+                onClick={handleGenerateInvite}
+                disabled={generatingInvite}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black uppercase tracking-widest text-xs transition-colors disabled:opacity-50"
+              >
+                {generatingInvite ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <>
+                    <Share2 size={16} />
+                    <span>{isRTL ? 'إنشاء رابط دعوة' : 'Generate Invite Link'}</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="space-y-3">
+                {/* Link display */}
+                <div className="bg-black/50 rounded-lg p-3 border border-white/5">
+                  <span className="text-xs font-mono text-gray-300 break-all block">
+                    {window.location.origin}/join/{inviteToken}
+                  </span>
+                  <span className="text-[10px] font-mono text-gray-500 break-all block mt-1">
+                    mihrab://club/invite/{inviteToken}
+                  </span>
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={copyInviteLink}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
+                  >
+                    {inviteCopied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                    {isRTL ? 'نسخ' : 'Copy'}
+                  </button>
+                  <button
+                    onClick={shareInviteLink}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-600 hover:bg-red-700 rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
+                  >
+                    <Share2 size={14} />
+                    {isRTL ? 'مشاركة' : 'Share'}
+                  </button>
+                  <button
+                    onClick={() => setInviteToken(null)}
+                    className="px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-xl text-xs transition-colors"
+                    title={isRTL ? 'إنشاء رابط جديد' : 'Generate new link'}
+                  >
+                    🔄
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
+        {/* ═══ JOIN REQUESTS ═══ */}
         {isOwner && requests.length > 0 && (
           <div>
             <h2 className="text-sm font-black uppercase tracking-widest text-red-500 mb-3">
-              {isRTL ? 'طلبات الانضمام' : 'Join Requests'}
+              {isRTL ? 'طلبات الانضمام' : 'Join Requests'} ({requests.length})
             </h2>
             <div className="space-y-2">
               {requests.map(req => (
@@ -198,6 +283,7 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
           </div>
         )}
 
+        {/* ═══ MEMBERS LIST ═══ */}
         <div>
           <h2 className="text-sm font-black uppercase tracking-widest text-red-500 mb-3">
             {isRTL ? 'قائمة الأعضاء' : 'Members List'} ({members.length})
@@ -209,9 +295,10 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
               {members.map(member => {
                 const memberId = getMemberId(member);
                 const roleBadge = getRoleBadge(member.role);
-                
+
                 return (
-                  <MotionDiv key={member._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between relative">
+                  <MotionDiv key={member._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                    className="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-center justify-between relative">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center text-xl">
                         {AVATARS[getMemberAvatar(member)] || '📖'}
@@ -223,42 +310,37 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
                         </div>
                       </div>
                     </div>
-                    {isOwner && memberId !== userProfile.id && (
+                    {isOwner && memberId !== userProfile.id && memberId !== (userProfile.serverUserId || '') && (
                       <div className="relative">
-                        <button 
+                        <button
                           onClick={() => setActionMemberId(actionMemberId === memberId ? null : memberId)}
                           className="text-gray-500 hover:text-white p-1"
                         >
                           <MoreVertical size={20} />
                         </button>
-                        
+
                         {actionMemberId === memberId && (
-                          <div className={`absolute ${isRTL ? 'left-0' : 'right-0'} mt-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-lg z-10 overflow-hidden`}>
-                            <button 
-                              onClick={() => handlePromote(memberId)}
-                              className="w-full text-left px-4 py-2 hover:bg-gray-700 text-sm"
-                            >
-                              {isRTL ? 'ترقية لمشرف' : 'Promote to Admin'}
-                            </button>
-                            <button 
-                              onClick={() => handleMute(memberId)}
-                              className="w-full text-left px-4 py-2 hover:bg-gray-700 text-sm"
-                            >
-                              {isRTL ? 'كتم' : 'Mute'}
-                            </button>
-                            <button 
-                              onClick={() => handleRemove(memberId)}
-                              className="w-full text-left px-4 py-2 hover:bg-gray-700 text-sm text-red-500"
-                            >
-                              {isRTL ? 'إزالة' : 'Remove'}
-                            </button>
-                            <button 
-                              onClick={() => handleBan(memberId)}
-                              className="w-full text-left px-4 py-2 hover:bg-gray-700 text-sm text-red-500"
-                            >
-                              {isRTL ? 'حظر' : 'Ban'}
-                            </button>
-                          </div>
+                          <>
+                            <div className="fixed inset-0 z-[100]" onClick={() => setActionMemberId(null)} />
+                            <div className={`absolute ${isRTL ? 'left-0' : 'right-0'} mt-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-lg z-[101] overflow-hidden`}>
+                              <button onClick={() => handlePromote(memberId)}
+                                className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm`}>
+                                {isRTL ? 'ترقية لمشرف' : 'Promote to Admin'}
+                              </button>
+                              <button onClick={() => handleMute(memberId)}
+                                className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm`}>
+                                {isRTL ? 'كتم (ساعة)' : 'Mute (1h)'}
+                              </button>
+                              <button onClick={() => handleRemove(memberId)}
+                                className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm text-red-500`}>
+                                {isRTL ? 'إزالة' : 'Remove'}
+                              </button>
+                              <button onClick={() => handleBan(memberId)}
+                                className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm text-red-500`}>
+                                {isRTL ? 'حظر' : 'Ban'}
+                              </button>
+                            </div>
+                          </>
                         )}
                       </div>
                     )}
@@ -269,17 +351,27 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
           )}
         </div>
       </div>
-      
+
+      {/* Confirm Dialog */}
       {confirmDialog && (
         <ConfirmDialog
-          isOpen={confirmDialog.isOpen}
+          lang={lang}
+          kind="warning"
           title={confirmDialog.title}
-          message={confirmDialog.message}
-          onConfirm={confirmDialog.onConfirm}
+          operationLabel={confirmDialog.message}
+          consequencesLabel=""
+          permanenceLabel=""
           onCancel={() => setConfirmDialog(null)}
-          confirmText={isRTL ? 'تأكيد' : 'Confirm'}
-          cancelText={isRTL ? 'إلغاء' : 'Cancel'}
+          onConfirm={confirmDialog.onConfirm}
         />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs font-bold px-4 py-2 rounded-full flex items-center gap-2 shadow-lg z-30 animate-pulse">
+          <Check size={14} className="text-green-500" />
+          {toast}
+        </div>
       )}
     </div>
   );
