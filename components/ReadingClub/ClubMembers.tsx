@@ -53,8 +53,15 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
   }, [club._id, isOwner]);
 
   // ═══════════════════════════════════════════════════
-  // INVITE LINK — generate & copy
+  // INVITE LINK — persistent from club creation
   // ═══════════════════════════════════════════════════
+  useEffect(() => {
+    // Auto-load existing invite code from club data
+    if (club.inviteCode && !inviteToken) {
+      setInviteToken(club.inviteCode);
+    }
+  }, [club.inviteCode]);
+
   const handleGenerateInvite = async () => {
     if (inviteToken) return;
     setGeneratingInvite(true);
@@ -70,23 +77,24 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
   };
 
   const copyInviteLink = () => {
-    if (!inviteToken) return;
-    const webUrl = `${window.location.origin}/join/${inviteToken}`;
+    const token = inviteToken || club.inviteCode;
+    if (!token) return;
+    const webUrl = `${window.location.origin}/join/${token}`;
     navigator.clipboard.writeText(webUrl).then(() => {
       setInviteCopied(true);
       setTimeout(() => setInviteCopied(false), 2000);
       showToast(isRTL ? 'تم نسخ الرابط' : 'Link copied');
     }).catch(() => {
-      // Fallback: copy deep link
-      navigator.clipboard.writeText(`mihrab://club/invite/${inviteToken}`);
+      navigator.clipboard.writeText(`mihrab://club/invite/${token}`);
       setInviteCopied(true);
       setTimeout(() => setInviteCopied(false), 2000);
     });
   };
 
   const shareInviteLink = () => {
-    if (!inviteToken) return;
-    const webUrl = `${window.location.origin}/join/${inviteToken}`;
+    const token = inviteToken || club.inviteCode;
+    if (!token) return;
+    const webUrl = `${window.location.origin}/join/${token}`;
     const text = isRTL ? `انضم لنادي "${club.name}" على تطبيق محراب!` : `Join "${club.name}" on Mihrab!`;
     if (navigator.share) {
       navigator.share({ title: club.name, text, url: webUrl }).catch(() => {});
@@ -244,13 +252,6 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
                   >
                     <Share2 size={14} />
                     {isRTL ? 'مشاركة' : 'Share'}
-                  </button>
-                  <button
-                    onClick={() => setInviteToken(null)}
-                    className="px-3 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-xl text-xs transition-colors"
-                    title={isRTL ? 'إنشاء رابط جديد' : 'Generate new link'}
-                  >
-                    🔄
                   </button>
                 </div>
               </div>
