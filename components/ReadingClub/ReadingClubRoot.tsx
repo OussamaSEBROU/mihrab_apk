@@ -116,6 +116,7 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken, onOp
   };
 
   const isOwner = selectedClub?.myRole === 'owner' || selectedClub?.ownerId === profile?.id;
+  const isOwnerOrAdmin = ['owner', 'full_admin', 'content_admin', 'member_admin', 'admin'].includes(selectedClub?.myRole || '');
 
   // Show loading screen during initial load instead of flashing setup
   if (loading) {
@@ -128,7 +129,7 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken, onOp
 
   return (
     <div className="w-full h-full bg-[#000a00] text-white flex flex-col font-black uppercase tracking-widest" dir={isRTL ? 'rtl' : 'ltr'}>
-      {view !== 'setup' && (
+      {view !== 'setup' && view !== 'discussion' && (
         <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/50 backdrop-blur-xl z-50">
           <button onClick={() => {
             if (view === 'list' || view === 'invite-preview') onBack();
@@ -224,7 +225,7 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken, onOp
           )}
           {view === 'discussion' && profile && selectedClub && (
             <MotionDiv key="discussion" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <ClubDiscussion lang={lang} club={selectedClub} userProfile={profile} onBack={() => setView('page')} />
+              <ClubDiscussion lang={lang} club={selectedClub} userProfile={profile} isOwner={isOwner} isAdmin={isOwnerOrAdmin} onBack={() => setView('page')} />
             </MotionDiv>
           )}
           {view === 'quotes' && profile && selectedClub && (
