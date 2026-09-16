@@ -264,6 +264,7 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
   const typingTimeoutRef = useRef<any>(null);
   const longPressRef = useRef<any>(null);
   const messageElsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const lastReactTimeRef = useRef(0);
 
   // ═══════════════════════════════════════════════════
   // KEYBOARD HANDLING
@@ -323,7 +324,14 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
     });
 
     readingClubSync.onMessageUpdated((updated: ClubPost) => {
-      setMessages(prev => prev.map(m => m._id === updated._id ? { ...m, ...updated } : m));
+      setMessages(prev => prev.map(m => {
+        if (m._id !== updated._id) return m;
+        // Protect reactions from being overwritten right after a local react
+        if (Date.now() - lastReactTimeRef.current < 3000) {
+          return { ...m, ...updated, reactions: m.reactions };
+        }
+        return { ...m, ...updated };
+      }));
     });
 
     readingClubSync.onMessageDeleted((data: { messageId: string }) => {
@@ -390,6 +398,11 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
       setSending(true);
       try {
         const attachBody = JSON.stringify(attachmentPreview);
+        if (attachBody.length > 5000) {
+          setSendError(isRTL ? 'الملف كبير جداً للإرسال عبر المحادثة' : 'File too large to send via chat');
+          setSending(false); setAttachmentPreview(null);
+          return;
+        }
         const res = await clubMessagesAPI.send(club._id, {
           body: attachBody, type: 'thought',
           replyToMessageId: replyTo?._id,
@@ -401,13 +414,20 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
       return;
     }
 
-    if (!body.trim() || sending) return;
+    const trimmed = body.trim();
+    if (!trimmed || sending) return;
+
+    // Body length validation
+    if (trimmed.length > 5000) {
+      setSendError(isRTL ? 'الرسالة طويلة جداً (أقصى 5000 حرف)' : 'Message too long (max 5000 characters)');
+      return;
+    }
 
     // Edit mode
     if (editingPost) {
       setSending(true);
       try {
-        const res = await clubMessagesAPI.edit(club._id, editingPost._id, body.trim(), spoilerLevel);
+        const res = await clubMessagesAPI.edit(club._id, editingPost._id, trimmed, spoilerLevel);
         if (res.ok && res.data) setMessages(prev => prev.map(m => m._id === editingPost._id ? res.data! : m));
       } catch (err) { console.error(err); }
       finally { setSending(false); setEditingPost(null); setBody(''); setSpoilerLevel(0); }
@@ -415,18 +435,18 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
     }
 
     // Send mode
-    const msgBody = body, msgReplyTo = replyTo, msgType = type, msgSpoiler = spoilerLevel;
+    const msgReplyTo = replyTo, msgType = type, msgSpoiler = spoilerLevel;
     setSending(true); setSendError(null); setBody(''); setReplyTo(null); setSpoilerLevel(0);
     readingClubSync.sendTyping(club._id, false);
     try {
       const res = await clubMessagesAPI.send(club._id, {
-        body: msgBody, type: msgType, spoilerLevel: msgSpoiler,
+        body: trimmed, type: msgType, spoilerLevel: msgSpoiler,
         replyToMessageId: msgReplyTo?._id, clientOperationId: crypto.randomUUID(),
       });
-      if (!res.ok) { setSendError(res.error || 'Failed'); setPendingBody(msgBody); }
-    } catch { setSendError('Network error'); setPendingBody(msgBody); }
+      if (!res.ok) { setSendError(res.error || 'Failed'); setPendingBody(trimmed); }
+    } catch { setSendError('Network error'); setPendingBody(trimmed); }
     finally { setSending(false); }
-  }, [body, sending, editingPost, attachmentPreview, replyTo, type, spoilerLevel, club._id]);
+  }, [body, sending, editingPost, attachmentPreview, replyTo, type, spoilerLevel, club._id, isRTL]);
 
   const handleRetry = useCallback(() => {
     if (pendingBody) { setBody(pendingBody); setPendingBody(null); setSendError(null); }
@@ -457,7 +477,10 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
 
   // ═══════════ OPTIMISTIC REACTIONS ═══════════
   const handleReact = useCallback(async (postId: string, emoji: string) => {
-    // Optimistic update — show instantly
+    // Mark time to protect from socket overwrite
+    lastReactTimeRef.current = Date.now();
+
+    // Optimistic update — show instantly, multiple users can react
     setMessages(prev => prev.map(m => {
       if (m._id !== postId) return m;
       const reactions = { ...(m.reactions || {}) };
@@ -469,12 +492,9 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
     }));
     setContextMenu(null);
 
-    // API call
+    // API call — don't overwrite local state with response
     try {
-      const res = await clubMessagesAPI.react(club._id, postId, emoji);
-      if (res.ok && res.data) {
-        setMessages(prev => prev.map(m => m._id === postId ? { ...m, reactions: res.data! } : m));
-      }
+      await clubMessagesAPI.react(club._id, postId, emoji);
     } catch (err) { console.error('React failed:', err); }
   }, [club._id, currentUserId]);
 
