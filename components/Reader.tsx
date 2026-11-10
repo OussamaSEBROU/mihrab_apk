@@ -5,6 +5,8 @@ import { translations } from '../i18n/translations';
 import { storageService } from '../services/storageService';
 import { pdfStorage } from '../services/pdfStorage';
 import { syncBridge } from '../services/syncBridge';
+import { challengeService } from '../services/challengeService';
+import ChallengeLeaderboard from './ChallengeLeaderboard';
 import { 
   ChevronLeft, ChevronRight, Maximize2, Highlighter, 
   PenTool, MessageSquare, Trash2, X, MousePointer2, 
@@ -14,7 +16,7 @@ import {
   FileAudio, Users, Send, MessageCircle, Share2, Zap,
   Mic, MicOff, Hand, Ghost, BookOpen,
   PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft,
-  Underline
+  Underline, Trophy
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import Peer from 'simple-peer';
@@ -140,6 +142,9 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const screenStreamRef = useRef<MediaStream | null>(null);
   const [showCopySuccess, setShowCopySuccess] = useState(false);
   const [speakingMembers, setSpeakingMembers] = useState<Set<string>>(new Set());
+  const [isChallengeOpen, setIsChallengeOpen] = useState(false);
+  const hasActiveChallenge = !!challengeService.getChallengeForBook(book.id);
+  const challengeSyncRef = useRef<number>(0); // tracks last challenge sync time
   const [peers, setPeers] = useState<Record<string, Peer.Instance>>({});
   const streamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Record<string, Peer.Instance>>({});
@@ -189,6 +194,16 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
             if (next % 30 === 0) {
               syncDelta();
               syncBridge.recordActivity(); // Track activity for re-engagement system
+              // Sync challenge progress every 60 seconds
+              if (next % 60 === 0 && challengeService.getChallengeForBook(book.id)) {
+                challengeService.syncProgress(
+                  book.id,
+                  currentPage,
+                  totalPages,
+                  Math.floor(next / 60),
+                  book.stars || 0
+                );
+              }
             }
             return next;
           });
@@ -525,6 +540,16 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                   storageService.updateBookStats(book.id, delta);
                   lastSyncedSecondsRef.current = sessionSecondsRef.current;
                 }
+                // Final challenge progress sync on exit
+                if (challengeService.getChallengeForBook(book.id)) {
+                  challengeService.syncProgress(
+                    book.id,
+                    currentPage,
+                    totalPages,
+                    Math.floor(sessionSecondsRef.current / 60),
+                    book.stars || 0
+                  );
+                }
                 onBackRef.current();
               }} className="flex items-center gap-1 px-2 py-1.5 md:px-5 md:py-2.5 bg-white/5 text-white rounded-full hover:bg-red-600/20 transition-all border border-white/10">
                 <ArrowLeft size={14} className={isRTL ? "rotate-180" : ""} />
@@ -534,6 +559,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
               <button onClick={() => setIsNightMode(!isNightMode)} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all ${isNightMode ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40'}`}>{isNightMode ? <Sun size={14}/> : <Moon size={14}/>}</button>
             </div>
             <div className="flex items-center gap-1.5">
+              {hasActiveChallenge && <button onClick={() => setIsChallengeOpen(!isChallengeOpen)} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all ${isChallengeOpen ? 'bg-amber-600 text-white shadow-[0_0_12px_rgba(245,158,11,0.5)]' : 'bg-white/5 text-amber-500/60 hover:bg-amber-600/20'}`}><Trophy size={14}/></button>}
               <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all ${isToolsOpen ? 'bg-white text-black' : 'bg-white/5 text-white/40'}`}><Palette size={14}/></button>
               <button onClick={toggleZenMode} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full border transition-all ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}><Maximize2 size={14}/></button>
             </div>
@@ -766,6 +792,15 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           </MotionDiv>
         )}
       </AnimatePresence>
+      {/* Challenge Leaderboard Dropdown */}
+      {hasActiveChallenge && (
+        <ChallengeLeaderboard
+          bookId={book.id}
+          lang={lang}
+          isOpen={isChallengeOpen}
+          onToggle={() => setIsChallengeOpen(!isChallengeOpen)}
+        />
+      )}
     </div>
   );
 };
