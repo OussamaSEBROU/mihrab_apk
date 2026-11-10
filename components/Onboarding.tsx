@@ -90,51 +90,77 @@ const onboardingData = {
 
 export const Onboarding: React.FC<OnboardingProps> = ({ lang, onComplete }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [isReady, setIsReady] = useState(false);
   const steps = onboardingData[lang];
   const isLastStep = currentIndex === steps.length - 1;
   const isRTL = lang === 'ar';
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
 
-  // Play cinematic intro sound on mount
+  // OPTIMIZED: Mark ready on first frame for instant render
   useEffect(() => {
-    try {
-      const audio = new Audio('/sanctuary_intro.mp3');
-      audio.loop = true;
-      audio.volume = 0;
-      audioRef.current = audio;
-      
-      const playPromise = audio.play();
-      if (playPromise) {
-        playPromise.catch(() => {
-          // Autoplay blocked — will play on first user interaction
-          const resumeAudio = () => {
-            audio.play().catch(() => {});
-            document.removeEventListener('touchstart', resumeAudio);
-            document.removeEventListener('click', resumeAudio);
-          };
-          document.addEventListener('touchstart', resumeAudio, { once: true });
-          document.addEventListener('click', resumeAudio, { once: true });
-        });
+    // Use rAF to ensure first paint happens immediately before audio loading
+    requestAnimationFrame(() => setIsReady(true));
+  }, []);
+
+  // OPTIMIZED: Defer audio loading until AFTER first paint (non-blocking)
+  useEffect(() => {
+    if (!isReady) return; // Wait until UI is rendered first
+
+    // Use setTimeout to push audio loading off the critical path
+    const audioLoadTimer = setTimeout(() => {
+      try {
+        const audio = new Audio();
+        audio.preload = 'auto';
+        audio.loop = true;
+        audio.volume = 0;
+        audioRef.current = audio;
+        
+        // Set src AFTER creating element to avoid blocking
+        audio.src = '/sanctuary_intro.mp3';
+        
+        const tryPlay = () => {
+          const playPromise = audio.play();
+          if (playPromise) {
+            playPromise.catch(() => {
+              const resumeAudio = () => {
+                audio.play().catch(() => {});
+                document.removeEventListener('touchstart', resumeAudio);
+                document.removeEventListener('click', resumeAudio);
+              };
+              document.addEventListener('touchstart', resumeAudio, { once: true });
+              document.addEventListener('click', resumeAudio, { once: true });
+            });
+          }
+          // Smooth fade-in over 2 seconds
+          let vol = 0;
+          const fadeIn = setInterval(() => {
+            vol = Math.min(vol + 0.05, 0.6);
+            audio.volume = vol;
+            if (vol >= 0.6) clearInterval(fadeIn);
+          }, 100);
+        };
+
+        // Wait for audio to be ready, or proceed after 500ms
+        if (audio.readyState >= 2) {
+          tryPlay();
+        } else {
+          audio.addEventListener('canplay', tryPlay, { once: true });
+          // Fallback: don't block on audio forever
+          setTimeout(tryPlay, 500);
+        }
+      } catch {
+        // Sound file not found — silent fallback
       }
-      
-      // Smooth fade-in over 2 seconds
-      let vol = 0;
-      const fadeIn = setInterval(() => {
-        vol = Math.min(vol + 0.05, 0.6);
-        audio.volume = vol;
-        if (vol >= 0.6) clearInterval(fadeIn);
-      }, 100);
-    } catch (e) {
-      // Sound file not found — silent fallback
-    }
+    }, 150); // 150ms delay to let first paint complete
 
     return () => {
+      clearTimeout(audioLoadTimer);
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
       }
     };
-  }, []);
+  }, [isReady]);
 
   const fadeOutAndComplete = () => {
     // Smooth fade-out over 800ms then stop
@@ -174,27 +200,28 @@ export const Onboarding: React.FC<OnboardingProps> = ({ lang, onComplete }) => {
       animate={{ opacity: 1 }} 
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-[9999] bg-[#000a00] flex items-center justify-center p-6 overflow-hidden"
+      style={{ willChange: 'opacity' }}
     >
-      {/* Dynamic Background Aura */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      {/* Dynamic Background Aura — GPU-accelerated */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ willChange: 'transform, opacity' }}>
         <MotionDiv
           animate={{ 
-            scale: [1, 1.2, 1],
-            opacity: [0.2, 0.4, 0.2]
+            scale: [1, 1.15, 1],
+            opacity: [0.15, 0.3, 0.15]
           }}
-          transition={{ duration: 8, repeat: Infinity }}
-          className={`absolute inset-0 bg-gradient-to-tr ${steps[currentIndex].color} blur-[120px] transition-colors duration-1000`} 
+          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+          className={`absolute inset-0 bg-gradient-to-tr ${steps[currentIndex].color} blur-[100px] transition-colors duration-700`} 
         />
       </div>
 
-      <div className="relative w-full max-w-xl flex flex-col items-center text-center perspective-1000">
+      <div className="relative w-full max-w-xl flex flex-col items-center text-center" style={{ willChange: 'transform' }}>
         <AnimatePresence mode="wait">
           <MotionDiv
             key={currentIndex}
-            initial={{ rotateY: isRTL ? 45 : -45, opacity: 0, scale: 0.8, z: -100 }}
-            animate={{ rotateY: 0, opacity: 1, scale: 1, z: 0 }}
-            exit={{ rotateY: isRTL ? -45 : 45, opacity: 0, scale: 0.8, z: -100 }}
-            transition={{ type: "spring", stiffness: 100, damping: 20 }}
+            initial={{ opacity: 0, x: isRTL ? -30 : 30, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: isRTL ? 30 : -30, scale: 0.95 }}
+            transition={{ type: "tween", duration: 0.3, ease: "easeOut" }}
             className="flex flex-col items-center w-full"
           >
             <div className="mb-10 relative group">
