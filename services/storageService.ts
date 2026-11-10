@@ -237,7 +237,8 @@ export const storageService = {
 
   // ── DEBOUNCED ANNOTATION PERSISTENCE ──
   // Writes to memory cache INSTANTLY (zero-latency keyboard response),
-  // then debounces heavy I/O (IDB, Filesystem, Cloud) by 800ms.
+  // then debounces ALL storage writes (localStorage, IDB, Filesystem, Cloud)
+  // so they only fire after 500ms of keyboard inactivity.
   // This eliminates keyboard lag regardless of library size.
   _annotationDebounceTimers: {} as Record<string, any>,
 
@@ -250,31 +251,25 @@ export const storageService = {
       }
     }
 
-    // Layer 2: Lightweight localStorage write (fast, ~1-2ms)
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.BOOKS);
-      if (raw) {
-        const books: Book[] = JSON.parse(raw);
-        const idx = books.findIndex(b => b.id === bookId);
-        if (idx !== -1) {
-          books[idx].annotations = annotations;
-          localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
-        }
-      }
-    } catch {}
-
-    // Layer 3+4+5: Debounced heavy persistence (IDB, Filesystem, Cloud)
-    // Only fires after 800ms of keyboard inactivity — eliminates jank
+    // Layer 2+3+4+5: ALL storage writes debounced together
+    // localStorage JSON.parse/stringify is too heavy per-keystroke with large libraries
     if (storageService._annotationDebounceTimers[bookId]) {
       clearTimeout(storageService._annotationDebounceTimers[bookId]);
     }
     storageService._annotationDebounceTimers[bookId] = setTimeout(() => {
-      const freshBooks = storageService.getBooks();
-      _persistToIDB(STORAGE_KEYS.BOOKS, freshBooks).catch(() => {});
-      _persistToFilesystem('backup_books.json', freshBooks);
-      syncBridge.syncFull(freshBooks, storageService.getShelves(), 'Annotation Update');
+      // localStorage write (from memory cache — always fresh)
+      try {
+        const books = storageService.getBooks();
+        localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
+        // IndexedDB persistence
+        _persistToIDB(STORAGE_KEYS.BOOKS, books).catch(() => {});
+        // Filesystem backup for native platforms
+        _persistToFilesystem('backup_books.json', books);
+        // Cloud sync
+        syncBridge.syncFull(books, storageService.getShelves(), 'Annotation Update');
+      } catch {}
       delete storageService._annotationDebounceTimers[bookId];
-    }, 800);
+    }, 500);
   },
 
   updateBookPage: (bookId: string, page: number) => {
