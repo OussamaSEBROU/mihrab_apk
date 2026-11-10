@@ -235,13 +235,46 @@ export const storageService = {
     storageService.saveBooks(books.filter(b => b.id !== bookId));
   },
 
+  // ── DEBOUNCED ANNOTATION PERSISTENCE ──
+  // Writes to memory cache INSTANTLY (zero-latency keyboard response),
+  // then debounces heavy I/O (IDB, Filesystem, Cloud) by 800ms.
+  // This eliminates keyboard lag regardless of library size.
+  _annotationDebounceTimers: {} as Record<string, any>,
+
   updateBookAnnotations: (bookId: string, annotations: Annotation[]) => {
-    const books = storageService.getBooks();
-    const index = books.findIndex(b => b.id === bookId);
-    if (index !== -1) {
-      books[index].annotations = annotations;
-      storageService.saveBooks(books);
+    // Layer 1: Instant memory cache update — zero-latency for UI
+    if (_booksCache) {
+      const idx = _booksCache.findIndex(b => b.id === bookId);
+      if (idx !== -1) {
+        _booksCache[idx] = { ..._booksCache[idx], annotations };
+      }
     }
+
+    // Layer 2: Lightweight localStorage write (fast, ~1-2ms)
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.BOOKS);
+      if (raw) {
+        const books: Book[] = JSON.parse(raw);
+        const idx = books.findIndex(b => b.id === bookId);
+        if (idx !== -1) {
+          books[idx].annotations = annotations;
+          localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
+        }
+      }
+    } catch {}
+
+    // Layer 3+4+5: Debounced heavy persistence (IDB, Filesystem, Cloud)
+    // Only fires after 800ms of keyboard inactivity — eliminates jank
+    if (storageService._annotationDebounceTimers[bookId]) {
+      clearTimeout(storageService._annotationDebounceTimers[bookId]);
+    }
+    storageService._annotationDebounceTimers[bookId] = setTimeout(() => {
+      const freshBooks = storageService.getBooks();
+      _persistToIDB(STORAGE_KEYS.BOOKS, freshBooks).catch(() => {});
+      _persistToFilesystem('backup_books.json', freshBooks);
+      syncBridge.syncFull(freshBooks, storageService.getShelves(), 'Annotation Update');
+      delete storageService._annotationDebounceTimers[bookId];
+    }, 800);
   },
 
   updateBookPage: (bookId: string, page: number) => {
