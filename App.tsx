@@ -20,11 +20,12 @@ import { pdfStorage, computeFileHash } from './services/pdfStorage';
 import { setupMobile, triggerHaptic } from './services/mobileService';
 import { communityService } from './services/communityService';
 import ReadingClubRoot from './components/ReadingClub/ReadingClubRoot';
+import ChallengeModal from './components/ChallengeModal';
 import {
   Menu, X, Plus, Clock, Star, BookOpen, Trash2, Globe, LayoutDashboard, Library,
   Check, Upload, Loader2, BookMarked, AlertTriangle,
   ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson, Timer,
-  Users
+  Users, Trophy
 } from 'lucide-react';
 // Global safety check for pdfjsLib to prevent initialization crashes if CDN fails to load
 if (typeof pdfjsLib !== 'undefined') {
@@ -192,6 +193,8 @@ const App: React.FC = () => {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [showChallengeModal, setShowChallengeModal] = useState(false);
+  const [challengeBook, setChallengeBook] = useState<Book | null>(null);
   const [isUiVisible, setIsUiVisible] = useState(true);
   const uiTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isNavVisible, setIsNavVisible] = useState(false);
@@ -1079,6 +1082,7 @@ const App: React.FC = () => {
                           onAddShelf={() => setIsAddingShelf(true)}
                           onDeleteBook={(b: Book) => setBookToDelete(b)}
                           onExportBook={handleExportBook}
+                          onChallengeBook={(b: Book) => { setChallengeBook(b); setShowChallengeModal(true); }}
                           onShelfSwipe={handleShelfSwipe}
                         />
                       </MotionDiv>
@@ -1585,6 +1589,17 @@ const App: React.FC = () => {
             </MotionDiv>
           )}
           {celebrationStar && <CelebrationOverlay starCount={celebrationStar} lang={lang} onComplete={handleCelebrationComplete} />}
+          {/* ── CHALLENGE MODAL ── */}
+          <AnimatePresence>
+            {showChallengeModal && challengeBook && (
+              <ChallengeModal
+                lang={lang}
+                book={challengeBook}
+                onClose={() => { setShowChallengeModal(false); setChallengeBook(null); }}
+                onChallengeReady={() => { setShowChallengeModal(false); setChallengeBook(null); setBooks(storageService.getBooks()); }}
+              />
+            )}
+          </AnimatePresence>
           {showOnboarding && <Onboarding lang={lang} onComplete={handleOnboardingComplete} />}
           {/* ── DEEP SESSION ONBOARDING OVERLAY ── */}
           {showDeepSessionOnboarding && (
