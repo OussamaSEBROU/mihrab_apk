@@ -4,7 +4,7 @@ import { motion, AnimatePresence, useMotionValue } from 'framer-motion';
 import { Language } from '../types';
 import type { Book } from '../types';
 import { translations } from '../i18n/translations';
-import { Upload, Trash2, Share2 } from 'lucide-react';
+import { Upload, Trash2, Share2, Trophy } from 'lucide-react';
 import { pdfStorage } from '../services/pdfStorage';
 
 const MotionDiv = motion.div as any;
@@ -18,6 +18,7 @@ interface ShelfProps {
   onAddBook: () => void;
   onDeleteBook: (book: Book) => void;
   onExportBook?: (book: Book) => void;
+  onChallengeBook?: (book: Book) => void;
   onAddShelf?: () => void;
   onShelfSwipe?: (direction: 'next' | 'prev') => void;
 }
@@ -25,7 +26,7 @@ interface ShelfProps {
 // Cover image cache — in-memory for instant display
 const coverCache = new Map<string, string>();
 
-export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeIndex, onActiveIndexChange, onSelectBook, onAddBook, onDeleteBook, onExportBook, onShelfSwipe }) => {
+export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeIndex, onActiveIndexChange, onSelectBook, onAddBook, onDeleteBook, onExportBook, onChallengeBook, onShelfSwipe }) => {
   const t = (translations as any)[lang];
   const dragX = useMotionValue(0);
   const [dragOffset, setDragOffset] = useState(0);
@@ -334,6 +335,20 @@ export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeInde
                       title={lang === 'ar' ? 'تصدير الكتاب' : 'Export Book'}
                     >
                       <Share2 size={12} />
+                    </button>
+                  )}
+
+                  {/* Challenge book icon */}
+                  {isCenter && onChallengeBook && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChallengeBook(book);
+                      }}
+                      className="absolute bottom-3 right-3 p-2.5 rounded-full bg-black/40 backdrop-blur-sm text-white/20 hover:text-amber-400 hover:bg-black/70 active:text-amber-300 active:scale-90 transition-all duration-300 shadow-lg z-20 border border-white/[0.06] hover:border-amber-500/30"
+                      title={lang === 'ar' ? 'منافسة الكتاب' : 'Book Challenge'}
+                    >
+                      <Trophy size={12} />
                     </button>
                   )}
 
