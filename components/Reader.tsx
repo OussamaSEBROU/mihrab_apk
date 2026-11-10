@@ -517,10 +517,19 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     setIsDrawing(false); setCurrentRect(null);
   };
   const currentEditingAnno = annotations.find(a => a.id === editingAnnoId);
-  const updateEditingAnnotation = (updates: Partial<Annotation>) => {
+  // ── OPTIMIZED: Separate UI state from heavy persistence ──
+  // Update React state instantly for responsive keyboard,
+  // debounce the storage write so it only fires after typing pauses.
+  const annotationSaveTimer = useRef<number | null>(null);
+  const updateEditingAnnotation = useCallback((updates: Partial<Annotation>) => {
     const updated = annotations.map(a => a.id === editingAnnoId ? { ...a, ...updates } : a);
-    setAnnotations(updated); storageService.updateBookAnnotations(book.id, updated);
-  };
+    setAnnotations(updated); // Instant UI update — zero lag
+    // Debounce the heavy storage call (800ms after last keystroke)
+    if (annotationSaveTimer.current) clearTimeout(annotationSaveTimer.current);
+    annotationSaveTimer.current = window.setTimeout(() => {
+      storageService.updateBookAnnotations(book.id, updated);
+    }, 800);
+  }, [annotations, editingAnnoId, book.id]);
   // Removed periodic 60s auto-save to prevent double counting and ensure 
   // that we only save once on exit with the full accurate session time.
   // This also fixes the "0m" notification bug by ensuring the full session 
@@ -529,8 +538,8 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     <div className={`fixed inset-0 z-[1000] bg-black flex flex-col ${fontClass} select-none overflow-hidden`} onMouseMove={handleUserActivity} onTouchStart={handleUserActivity}>
       <AnimatePresence>
         {showControls && (
-          <MotionHeader key="header" initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto">
-            <div className="flex items-center gap-1.5 md:gap-3">
+          <MotionHeader key="header" initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} className="fixed top-0 left-0 right-0 px-3 py-2.5 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto">
+            <div className="flex items-center gap-2 md:gap-3">
               <button onClick={() => {
                 // IMMEDIATE timer kill — zero phantom seconds
                 if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -551,17 +560,17 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                   );
                 }
                 onBackRef.current();
-              }} className="flex items-center gap-1 px-2 py-1.5 md:px-5 md:py-2.5 bg-white/5 text-white rounded-full hover:bg-red-600/20 transition-all border border-white/10">
-                <ArrowLeft size={14} className={isRTL ? "rotate-180" : ""} />
-                <span className="text-[8px] md:text-xs font-black uppercase tracking-widest hidden mini:inline">{isRTL ? 'المحراب' : 'Sanctuary'}</span>
+              }} className="flex items-center gap-1.5 px-3 py-2 md:px-5 md:py-2.5 bg-white/5 text-white rounded-full hover:bg-red-600/20 transition-all border border-white/10">
+                <ArrowLeft size={16} className={isRTL ? "rotate-180" : ""} />
+                <span className="text-[9px] md:text-xs font-black uppercase tracking-widest hidden mini:inline">{isRTL ? 'المحراب' : 'Sanctuary'}</span>
               </button>
-              <button onClick={() => setIsArchiveOpen(true)} className="w-7 h-7 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10"><ListOrdered size={14}/></button>
-              <button onClick={() => setIsNightMode(!isNightMode)} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all ${isNightMode ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40'}`}>{isNightMode ? <Sun size={14}/> : <Moon size={14}/>}</button>
+              <button onClick={() => setIsArchiveOpen(true)} className="w-9 h-9 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 border border-white/[0.06]"><ListOrdered size={16}/></button>
+              <button onClick={() => setIsNightMode(!isNightMode)} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all border border-white/[0.06] ${isNightMode ? 'bg-red-600 text-white border-red-600' : 'bg-white/5 text-white/40'}`}>{isNightMode ? <Sun size={16}/> : <Moon size={16}/>}</button>
             </div>
-            <div className="flex items-center gap-1.5">
-              {hasActiveChallenge && <button onClick={() => setIsChallengeOpen(!isChallengeOpen)} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all ${isChallengeOpen ? 'bg-amber-600 text-white shadow-[0_0_12px_rgba(245,158,11,0.5)]' : 'bg-white/5 text-amber-500/60 hover:bg-amber-600/20'}`}><Trophy size={14}/></button>}
-              <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all ${isToolsOpen ? 'bg-white text-black' : 'bg-white/5 text-white/40'}`}><Palette size={14}/></button>
-              <button onClick={toggleZenMode} className={`w-7 h-7 md:w-11 md:h-11 flex items-center justify-center rounded-full border transition-all ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}><Maximize2 size={14}/></button>
+            <div className="flex items-center gap-2">
+              {hasActiveChallenge && <button onClick={() => setIsChallengeOpen(!isChallengeOpen)} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all border ${isChallengeOpen ? 'bg-amber-600 text-white border-amber-600 shadow-[0_0_12px_rgba(245,158,11,0.5)]' : 'bg-white/5 text-amber-500/60 border-white/[0.06] hover:bg-amber-600/20'}`}><Trophy size={16}/></button>}
+              <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all border border-white/[0.06] ${isToolsOpen ? 'bg-white text-black border-white' : 'bg-white/5 text-white/40'}`}><Palette size={16}/></button>
+              <button onClick={toggleZenMode} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full border transition-all ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}><Maximize2 size={16}/></button>
             </div>
           </MotionHeader>
         )}
@@ -637,7 +646,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           >
             <AnimatePresence mode="wait">
               <MotionDiv key={currentPage} initial={{ x: direction * (isRTL ? -40 : 40), opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: direction * (isRTL ? 40 : -40), opacity: 0 }} transition={{ duration: 0.25 }} className="w-full h-full flex items-center justify-center">
-                {pages[currentPage] ? <img src={pages[currentPage]} className="w-full h-full object-contain pointer-events-none" style={{ filter: isNightMode ? 'invert(1) hue-rotate(180deg)' : 'none' }} alt={`Page ${currentPage + 1}`} /> : <div className="w-12 h-12 rounded-full border-2 border-white/5 border-t-red-600 animate-spin" />}
+                {pages[currentPage] ? <img src={pages[currentPage]} className="w-full h-full object-contain pointer-events-none" style={{ filter: isNightMode ? 'invert(1) hue-rotate(180deg)' : 'none' }} alt={`Page ${currentPage + 1}`} /> : <div className="absolute inset-0 flex items-center justify-center"><div className="w-10 h-10 rounded-full border-[2.5px] border-white/[0.06] border-t-red-600 animate-spin" style={{ animationDuration: '0.8s' }} /></div>}
               </MotionDiv>
             </AnimatePresence>
             <div className="absolute inset-0 pointer-events-none">
@@ -747,7 +756,9 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                   onClick={() => { 
                     const confirmMsg = isRTL ? 'هل أنت متأكد من مسح هذه الملاحظة نهائياً؟' : 'Are you sure you want to delete this note permanently?';
                     if (window.confirm(confirmMsg)) {
-                      setAnnotations(annotations.filter(a => a.id !== editingAnnoId)); 
+                      const updated = annotations.filter(a => a.id !== editingAnnoId);
+                      setAnnotations(updated);
+                      storageService.updateBookAnnotations(book.id, updated);
                       setEditingAnnoId(null); 
                     }
                   }} 
@@ -755,7 +766,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                 >
                   <Trash2 size={14}/>
                 </button>
-                <button onClick={() => { setEditingAnnoId(null); setActiveTool('view'); }} className="flex-1 bg-white text-black py-2 rounded-lg font-black uppercase text-[8px] tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2"><Check size={12}/>{isRTL ? 'حفظ بالفهرس' : 'Save to Index'}</button>
+                <button onClick={() => { storageService.updateBookAnnotations(book.id, annotations); if (annotationSaveTimer.current) { clearTimeout(annotationSaveTimer.current); annotationSaveTimer.current = null; } setEditingAnnoId(null); setActiveTool('view'); }} className="flex-1 bg-white text-black py-2 rounded-lg font-black uppercase text-[8px] tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2"><Check size={12}/>{isRTL ? 'حفظ بالفهرس' : 'Save to Index'}</button>
               </div>
             </MotionDiv>
           </MotionDiv>
