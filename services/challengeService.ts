@@ -30,16 +30,45 @@ function generatePinFromToken(token: string): string {
 // ══════════════════════════════════════════════════════════════
 // LOCAL STORAGE
 // ══════════════════════════════════════════════════════════════
+// ذاكرة وسيطة: كان getChallenges() يعمل JSON.parse جديداً في كل استدعاء (وفي كل render للقارئ)
+// فيُنتج كائنات جديدة كل مرة ويُسبّب إعادة جلب لا نهائية للوحة الصدارة + ثقلاً في القارئ.
+let _challengesCache: BookChallenge[] | null = null;
+
 function getChallenges(): BookChallenge[] {
+  if (_challengesCache) return _challengesCache;
   try {
     const data = localStorage.getItem(CHALLENGES_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch { return []; }
+    const parsed = data ? JSON.parse(data) : [];
+    _challengesCache = Array.isArray(parsed) ? parsed : [];
+  } catch { _challengesCache = []; }
+  return _challengesCache!;
 }
 
 function saveChallenges(challenges: BookChallenge[]) {
-  localStorage.setItem(CHALLENGES_KEY, JSON.stringify(challenges));
+  _challengesCache = challenges;
+  try { localStorage.setItem(CHALLENGES_KEY, JSON.stringify(challenges)); } catch { /* non-critical */ }
 }
+
+// منع التنفيذ المزدوج (ضغطتان متتاليتان = مجموعتان على السيرفر) + منع تكرار الجلب المتزامن
+const _inflight = new Map<string, Promise<any>>();
+function once<T>(key: string, factory: () => Promise<T>): Promise<T> {
+  const existing = _inflight.get(key);
+  if (existing) return existing as Promise<T>;
+  const p = factory().finally(() => { _inflight.delete(key); });
+  _inflight.set(key, p);
+  return p;
+}
+
+// آخر حالة أُرسلت للسحابة لكل كتاب (لتجنب رسائل مكررة تملأ نافذة الـ 200 رسالة)
+const _lastSent = new Map<string, { sig: string; at: number }>();
+const HEARTBEAT_MS = 5 * 60 * 1000;
+
+const sortParticipants = (list: ChallengeParticipant[]) =>
+  [...list].sort((a, b) =>
+    (b.score - a.score) ||
+    (b.percentComplete - a.percentComplete) ||
+    (a.lastUpdated - b.lastUpdated) ||
+    a.userId.localeCompare(b.userId));
 
 function getIdentity(): ChallengeIdentity | null {
   try {
@@ -106,12 +135,13 @@ export const challengeService = {
   },
 
   // ─── Create Challenge ───────────────────────────────────────
-  createChallenge: async (
+  createChallenge: (
     identity: ChallengeIdentity,
     bookId: string,
     bookTitle: string,
     bookAuthor: string
-  ): Promise<{ success: boolean; challenge?: BookChallenge; pin?: string; error?: string }> => {
+  ): Promise<{ success: boolean; challenge?: BookChallenge; pin?: string; error?: string }> =>
+   once(`create:${bookId}`, async () => {
     try {
       // Ensure user is registered with Reading Club system
       if (!readingClubAuth.isLoggedIn()) {
@@ -121,8 +151,8 @@ export const challengeService = {
         }
       }
 
-      // Update profile nickname to match challenge identity
-      await readingClubAuth.updateProfile({ nickname: identity.name });
+      // Update profile nickname to match challenge identity (غير حاجب: لا يؤخر إنشاء المنافسة)
+      readingClubAuth.updateProfile({ nickname: identity.name }).catch(() => {});
 
       // Create a private group for this challenge
       const groupResult = await clubGroupsAPI.create({
@@ -187,24 +217,25 @@ export const challengeService = {
       filtered.push(challenge);
       saveChallenges(filtered);
 
-      // Send initial progress message
-      await clubMessagesAPI.send(group._id, {
+      // Send initial progress message (غير حاجب — يظهر المنافس فوراً محلياً والسحابة تلحق)
+      Promise.resolve(clubMessagesAPI.send(group._id, {
         body: buildProgressPayload(identity, 0, 0, 0, 0),
         type: 'announcement',
-      });
+      })).catch(() => {});
 
       return { success: true, challenge, pin };
     } catch (e: any) {
       return { success: false, error: e.message || 'Unknown error' };
     }
-  },
+   }),
 
   // ─── Join Challenge ─────────────────────────────────────────
-  joinChallenge: async (
+  joinChallenge: (
     identity: ChallengeIdentity,
     pin: string,
     bookId: string
-  ): Promise<{ success: boolean; challenge?: BookChallenge; error?: string }> => {
+  ): Promise<{ success: boolean; challenge?: BookChallenge; error?: string }> =>
+   once(`join:${bookId}`, async () => {
     try {
       // Ensure user is registered
       if (!readingClubAuth.isLoggedIn()) {
@@ -214,7 +245,7 @@ export const challengeService = {
         }
       }
 
-      await readingClubAuth.updateProfile({ nickname: identity.name });
+      readingClubAuth.updateProfile({ nickname: identity.name }).catch(() => {});
 
       // We need to find the challenge by PIN
       // The PIN was derived from the invite token
@@ -274,7 +305,19 @@ export const challengeService = {
         creatorName: '',
         creatorCountry: '',
         createdAt: new Date(group.createdAt).getTime(),
-        participants: [],
+        // نبذر المشارك الحالي محلياً: تظهر لوحة الصدارة فوراً بدل شاشة "لا يوجد متنافسون"
+        participants: [{
+          userId: readingClubAuth.getLocalProfile()?.id || '',
+          name: identity.name,
+          country: identity.country,
+          currentPage: 0,
+          totalPages: 0,
+          percentComplete: 0,
+          readingMinutes: 0,
+          stars: 0,
+          lastUpdated: Date.now(),
+          score: 0,
+        }],
         isOwner: false,
         inviteToken,
         lastSyncedAt: Date.now(),
@@ -285,19 +328,20 @@ export const challengeService = {
       filtered.push(challenge);
       saveChallenges(filtered);
 
-      // Send join progress message
-      await clubMessagesAPI.send(group._id, {
+      // Send join progress message (غير حاجب)
+      Promise.resolve(clubMessagesAPI.send(group._id, {
         body: buildProgressPayload(identity, 0, 0, 0, 0),
         type: 'announcement',
-      });
+      })).catch(() => {});
 
       return { success: true, challenge };
     } catch (e: any) {
       return { success: false, error: e.message || 'Unknown error' };
     }
-  },
+   }),
 
   // ─── Sync Progress ──────────────────────────────────────────
+  // المحلي أولاً (فوري ومتسق دائماً) ثم السحابة بأفضل جهد — فلا تفشل اللوحة المحلية بسبب الشبكة.
   syncProgress: async (
     bookId: string,
     currentPage: number,
@@ -311,61 +355,79 @@ export const challengeService = {
     const identity = getIdentity();
     if (!identity) return;
 
+    const userId = readingClubAuth.getLocalProfile()?.id || '';
+    const percentComplete = totalPages > 0 ? Math.round((currentPage / totalPages) * 100) : 0;
+    const score = readingMinutes + percentComplete;
+
+    // 1) تحديث محلي فوري
+    const myParticipant: ChallengeParticipant = {
+      userId,
+      name: identity.name,
+      country: identity.country,
+      currentPage,
+      totalPages,
+      percentComplete,
+      readingMinutes,
+      stars,
+      lastUpdated: Date.now(),
+      score,
+    };
+    const challenges = getChallenges();
+    const idx = challenges.findIndex(c => c.bookId === bookId);
+    if (idx !== -1) {
+      const list = challenges[idx].participants;
+      const existing = list.findIndex(p => p.userId === userId);
+      if (existing !== -1) list[existing] = myParticipant;
+      else list.push(myParticipant);
+      challenges[idx].lastSyncedAt = Date.now();
+      saveChallenges(challenges);
+    }
+
+    // 2) سحابياً — مع تجنب تكرار نفس الحالة (إلا نبضة كل 5 دقائق ليبقى أثرك داخل نافذة الرسائل)
+    const sig = `${currentPage}|${totalPages}|${readingMinutes}|${stars}|${identity.name}|${identity.country}`;
+    const last = _lastSent.get(bookId);
+    if (last && last.sig === sig && Date.now() - last.at < HEARTBEAT_MS) return;
+
     try {
-      await clubMessagesAPI.send(challenge.id, {
+      const res: any = await clubMessagesAPI.send(challenge.id, {
         body: buildProgressPayload(identity, currentPage, totalPages, readingMinutes, stars),
         type: 'thought',
       });
-
-      // Update local record
-      const userId = readingClubAuth.getLocalProfile()?.id || '';
-      const percentComplete = totalPages > 0 ? Math.round((currentPage / totalPages) * 100) : 0;
-      const score = readingMinutes + percentComplete;
-
-      const myParticipant: ChallengeParticipant = {
-        userId,
-        name: identity.name,
-        country: identity.country,
-        currentPage,
-        totalPages,
-        percentComplete,
-        readingMinutes,
-        stars,
-        lastUpdated: Date.now(),
-        score,
-      };
-
-      const challenges = getChallenges();
-      const idx = challenges.findIndex(c => c.bookId === bookId);
-      if (idx !== -1) {
-        const existing = challenges[idx].participants.findIndex(p => p.userId === userId);
-        if (existing !== -1) {
-          challenges[idx].participants[existing] = myParticipant;
-        } else {
-          challenges[idx].participants.push(myParticipant);
-        }
-        challenges[idx].lastSyncedAt = Date.now();
-        saveChallenges(challenges);
-      }
+      if (!res || res.ok !== false) _lastSent.set(bookId, { sig, at: Date.now() });
     } catch (e) {
       console.warn('[Challenge] Progress sync failed:', e);
     }
   },
 
   // ─── Fetch Leaderboard ──────────────────────────────────────
-  fetchLeaderboard: async (bookId: string): Promise<ChallengeParticipant[]> => {
+  // يعيد دائماً قائمة غير فارغة قدر الإمكان: يدمج السحابة مع الذاكرة المحلية (أحدث وقت يفوز)
+  // بحيث لا يختفي متنافس لمجرد أن رسالته خرجت من نافذة آخر 200 رسالة.
+  getCachedLeaderboard: (bookId: string): ChallengeParticipant[] => {
+    const challenge = getChallenges().find(c => c.bookId === bookId);
+    return challenge ? sortParticipants(challenge.participants || []) : [];
+  },
+
+  fetchLeaderboard: (bookId: string): Promise<ChallengeParticipant[]> =>
+   once(`board:${bookId}`, async () => {
     const challenge = getChallenges().find(c => c.bookId === bookId);
     if (!challenge) return [];
+    const cached = () => sortParticipants(challenge.participants || []);
 
     try {
-      // Fetch messages from the challenge group to build leaderboard
-      const messagesResult = await clubMessagesAPI.list(challenge.id, undefined, 200);
-      if (!messagesResult.ok || !messagesResult.data?.messages) {
-        return challenge.participants.sort((a, b) => b.score - a.score);
+      // مهلة قصوى: لا ننتظر سيرفراً نائماً أكثر من 12 ثانية والواجهة تعرض المخزَّن
+      const messagesResult: any = await Promise.race([
+        clubMessagesAPI.list(challenge.id, undefined, 200),
+        new Promise((resolve) => setTimeout(() => resolve(null), 12000)),
+      ]);
+      if (!messagesResult || !messagesResult.ok || !messagesResult.data?.messages) {
+        return cached();
       }
 
       // Parse progress messages — keep only latest per user
       const latestByUser = new Map<string, ChallengeParticipant>();
+
+      // ابدأ من النسخة المحلية ثم دع السحابة تتفوق عند كونها أحدث
+      for (const p of challenge.participants || []) latestByUser.set(p.userId, p);
 
       for (const msg of messagesResult.data.messages) {
         const progress = isProgressMessage(msg.body || '');
@@ -390,8 +452,7 @@ export const challengeService = {
         }
       }
 
-      const participants = Array.from(latestByUser.values())
-        .sort((a, b) => b.score - a.score);
+      const participants = sortParticipants(Array.from(latestByUser.values()));
 
       // Update local cache
       const challenges = getChallenges();
@@ -405,9 +466,9 @@ export const challengeService = {
       return participants;
     } catch (e) {
       console.warn('[Challenge] Leaderboard fetch failed:', e);
-      return challenge.participants.sort((a, b) => b.score - a.score);
+      return cached();
     }
-  },
+   }),
 
   // ─── Leave Challenge ────────────────────────────────────────
   leaveChallenge: async (bookId: string): Promise<void> => {
@@ -418,6 +479,7 @@ export const challengeService = {
       } catch {}
       const challenges = getChallenges().filter(c => c.bookId !== bookId);
       saveChallenges(challenges);
+      _lastSent.delete(bookId);
     }
   },
 
