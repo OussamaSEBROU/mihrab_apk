@@ -4,6 +4,7 @@ import { Language } from '../types';
 import type { Book, ShelfData } from '../types';
 import { translations } from '../i18n/translations';
 import { storageService } from '../services/storageService';
+import { badgeStore } from '../services/badgeStore';
 import { deepSessionService } from '../services/deepSessionService';
 import type { DeepSession, DeepSessionStats } from '../types';
 import { 
@@ -50,7 +51,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
   // Global Metrics
   const globalSeconds = useMemo(() => books.reduce((acc, b) => acc + b.timeSpentSeconds, 0), [books]);
   const globalMinutes = Math.floor(globalSeconds / 60);
-  const globalStars = useMemo(() => books.reduce((acc, b) => acc + b.stars, 0), [books]);
+  // مصدر الأوسمة الثابت: لا يتذبذب مهما تغيّر شكل حالة الكتب أثناء التنقل أو المزامنة
+  const earnedByBook = useMemo(() => {
+    const m: Record<string, number> = {};
+    books.forEach(b => { m[b.id] = badgeStore.getEarned(b); });
+    return m;
+  }, [books]);
+  const globalStars = useMemo(() => books.reduce((acc, b) => acc + (earnedByBook[b.id] || 0), 0), [books, earnedByBook]);
   const globalAnnotations = useMemo(() => books.reduce((acc, b) => acc + (b.annotations?.length || 0), 0), [books]);
   
   // Book Statistics
@@ -61,11 +68,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
         id: book.id,
         title: book.title,
         minutes,
-        stars: book.stars,
+        stars: earnedByBook[book.id] ?? (book.stars || 0),
         color: ANALYTICAL_COLORS[idx % ANALYTICAL_COLORS.length]
       };
     }).sort((a, b) => b.minutes - a.minutes);
-  }, [books]);
+  }, [books, earnedByBook]);
 
   const maxBookMinutes = useMemo(() => Math.max(...bookStats.map(b => b.minutes), 1), [bookStats]);
 
@@ -608,20 +615,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
                 <h4 className="text-[10px] md:text-xs font-black uppercase tracking-widest text-white/80 group-hover:text-white transition-colors truncate max-w-[120px] md:max-w-[150px]">{book.title}</h4>
                 <div className="flex items-center gap-1 bg-red-600/10 px-2 py-0.5 md:py-1 rounded-full border border-red-600/20">
                   <Star className="text-red-600 fill-red-600 size-2 md:size-2.5" />
-                  <span className="text-[8px] md:text-[9px] font-black text-red-600">{book.stars || 0}</span>
+                  <span className="text-[8px] md:text-[9px] font-black text-red-600">{earnedByBook[book.id] ?? (book.stars || 0)}</span>
                 </div>
               </div>
               
               <div className="flex flex-wrap gap-1.5 md:gap-2">
                 {[...Array(7)].map((_, i) => {
-                  const isEarned = (book.stars || 0) > i;
+                  const isEarned = (earnedByBook[book.id] ?? (book.stars || 0)) > i;
                   return (
                     <div 
                       key={i} 
                       className={`p-1.5 md:p-2 rounded-lg md:rounded-xl border transition-all flex items-center gap-1.5 md:gap-2 ${isEarned ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-500' : 'bg-white/5 border-transparent text-white/10 grayscale opacity-40'}`}
                       title={t.badges[i]}
                     >
-                      <Sparkles className={`size-2.5 md:size-3 ${isEarned ? "animate-pulse" : ""}`} />
+                      <Sparkles className="size-2.5 md:size-3" />
                       <span className="text-[7px] md:text-[8px] font-black uppercase tracking-tighter">{t.badges[i]}</span>
                     </div>
                   );
