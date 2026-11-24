@@ -109,6 +109,8 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     if (persist) storageService.updateBookAnnotations(book.id, next);
   };
   const [isDrawing, setIsDrawing] = useState(false);
+  // Zen edit: شريط الأدوات يلتصق بالجهة المقابلة لمنطقة التحديد (لا يحجب النص) ويتلاشى أثناء الرسم/التكبير بالقرص
+  const [toolDock, setToolDock] = useState<'top' | 'bottom'>('bottom');
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [currentRect, setCurrentRect] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
   
@@ -500,6 +502,9 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const handleStart = (clientX: number, clientY: number) => {
     handleUserActivity();
     if (activeTool === 'view' || isPinching) return;
+    // إحداثيات الشاشة الفعلية (clientY) تعمل مع التكبير أيضاً: التحديد في النصف السفلي → الشريط أعلى، والعكس
+    const nextDock = clientY > window.innerHeight * 0.5 ? 'top' : 'bottom';
+    setToolDock(prev => (prev === nextDock ? prev : nextDock));
     const { x, y } = getRelativeCoords(clientX, clientY);
     if (activeTool === 'note') {
       const newNote: Annotation = { id: Math.random().toString(36).substr(2, 9), type: 'note', pageIndex: currentPage, x, y, text: '', title: '', color: activeColor };
@@ -583,7 +588,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     <div className={`fixed inset-0 z-[1000] bg-black flex flex-col ${fontClass} select-none overflow-hidden`} onMouseMove={handleUserActivity} onTouchStart={handleUserActivity}>
       <AnimatePresence>
         {showControls && (
-          <MotionHeader key="header" initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} className="fixed top-0 left-0 right-0 px-3 py-2.5 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto">
+          <MotionHeader key="header" initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: isDrawing || isPinching ? 0 : 1 }} exit={{ y: -100, opacity: 0 }} transition={{ duration: 0.12 }} style={{ pointerEvents: isDrawing || isPinching ? 'none' : 'auto' }} className="fixed top-0 left-0 right-0 px-3 py-2.5 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto">
             <div className="flex items-center gap-2 md:gap-3">
               <button onClick={() => {
                 // IMMEDIATE timer kill — zero phantom seconds
@@ -717,30 +722,8 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       <div className="fixed bottom-6 left-0 right-0 z-[2000] pointer-events-none px-6 flex flex-col items-center gap-4">
         <AnimatePresence>
           {showControls && (
-            <MotionDiv key="bottom-controls" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-4 pointer-events-auto">
+            <MotionDiv key="bottom-controls" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: isDrawing || isPinching ? 0 : 1 }} exit={{ y: 20, opacity: 0 }} transition={{ duration: 0.12 }} style={{ pointerEvents: isDrawing || isPinching ? 'none' : 'auto' }} className="flex flex-col items-center gap-4 pointer-events-auto">
               
-              <AnimatePresence>
-                {isToolsOpen && (
-                  <MotionDiv key="tools" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="bg-black/80 backdrop-blur-3xl border border-white/10 px-4 py-2 rounded-full shadow-4xl flex items-center gap-3 mb-2">
-                    {(Object.keys(TOOL_ICONS) as Tool[]).map(tool => {
-                      const Icon = TOOL_ICONS[tool];
-                      const isActive = activeTool === tool;
-                      return (
-                        <div key={tool} className="relative flex items-center">
-                          <button onClick={() => setActiveTool(activeTool === tool ? 'view' : tool)} className={`w-8 h-8 flex items-center justify-center rounded-full transition-all duration-300 ${isActive ? 'bg-red-600 text-white shadow-xl scale-110' : 'text-white/30 hover:bg-white/5'}`}><Icon size={14}/></button>
-                          {isActive && tool !== 'view' && (
-                            <div className="absolute -top-10 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/95 p-1.5 rounded-full border border-white/10 shadow-2xl">
-                              {COLORS.map(c => (
-                                <button key={c.hex} onClick={() => setActiveColor(c.hex)} className={`w-3.5 h-3.5 rounded-full border transition-all ${activeColor === c.hex ? 'border-white scale-125 shadow-[0_0_8px_white]' : 'border-transparent opacity-60'}`} style={{ backgroundColor: c.hex }} />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </MotionDiv>
-                )}
-              </AnimatePresence>
               <div className="bg-red-600/10 border border-red-600/30 px-5 py-1.5 rounded-full backdrop-blur-xl flex items-center gap-2 shadow-2xl">
                  <Clock size={12} className="text-red-600 animate-pulse" />
                  <span className="text-[10px] md:text-xs font-black text-red-600 tracking-widest">{Math.floor(sessionSeconds/60)}m</span>
@@ -758,6 +741,42 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
           )}
         </AnimatePresence>
       </div>
+      {/* ZEN EDIT TOOLBAR — شريط واحد مدمج (أدوات + ألوان) يلتصق بعيداً عن منطقة التحديد */}
+      <AnimatePresence>
+        {showControls && isToolsOpen && !editingAnnoId && (
+          <MotionDiv
+            key="tools"
+            initial={{ opacity: 0, y: toolDock === 'top' ? -14 : 14 }}
+            animate={{ opacity: isDrawing || isPinching ? 0 : 1, y: 0 }}
+            exit={{ opacity: 0, y: toolDock === 'top' ? -14 : 14 }}
+            transition={{ duration: 0.15 }}
+            className={`fixed left-0 right-0 z-[2100] flex justify-center px-4 pointer-events-none ${toolDock === 'top' ? 'top-[72px] md:top-[104px]' : 'bottom-[150px]'}`}
+            style={{ transition: 'top .2s ease, bottom .2s ease' }}
+          >
+            <div
+              className="bg-black/70 backdrop-blur-2xl border border-white/10 rounded-[1.75rem] px-3 py-2 shadow-[0_10px_40px_rgba(0,0,0,0.6)] flex flex-col items-center gap-2"
+              style={{ pointerEvents: isDrawing || isPinching ? 'none' : 'auto' }}
+            >
+              <div className="flex items-center gap-2.5">
+                {(Object.keys(TOOL_ICONS) as Tool[]).map(tool => {
+                  const Icon = TOOL_ICONS[tool];
+                  const isActive = activeTool === tool;
+                  return (
+                    <button key={tool} onClick={() => setActiveTool(activeTool === tool ? 'view' : tool)} className={`w-9 h-9 flex items-center justify-center rounded-full transition-all duration-200 ${isActive ? 'bg-red-600 text-white shadow-xl scale-105' : 'text-white/35 hover:bg-white/5'}`}><Icon size={15}/></button>
+                  );
+                })}
+              </div>
+              {activeTool !== 'view' && (
+                <div className="flex items-center gap-3 pt-2 border-t border-white/10 w-full justify-center">
+                  {COLORS.map(c => (
+                    <button key={c.hex} aria-label={c.name} onClick={() => setActiveColor(c.hex)} className={`w-6 h-6 rounded-full border-2 transition-all ${activeColor === c.hex ? 'border-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.7)]' : 'border-transparent opacity-60'}`} style={{ backgroundColor: c.hex }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {isArchiveOpen && (
           <WisdomIndex
