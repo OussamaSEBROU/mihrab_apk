@@ -7,6 +7,8 @@ import { pdfStorage } from '../services/pdfStorage';
 import { syncBridge } from '../services/syncBridge';
 import { challengeService } from '../services/challengeService';
 import ChallengeLeaderboard from './ChallengeLeaderboard';
+import WisdomIndex from './WisdomIndex';
+import AnnotationEditor, { type AnnotationPatch } from './AnnotationEditor';
 import { 
   ChevronLeft, ChevronRight, Maximize2, Highlighter, 
   PenTool, MessageSquare, Trash2, X, MousePointer2, 
@@ -100,6 +102,12 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const [activeTool, setActiveTool] = useState<Tool>('view');
   const [activeColor, setActiveColor] = useState(COLORS[0].hex);
   const [annotations, setAnnotations] = useState<Annotation[]>(book.annotations || []);
+  const annotationsRef = useRef<Annotation[]>(annotations);
+  const applyAnnotations = (next: Annotation[], persist: boolean) => {
+    annotationsRef.current = next;
+    setAnnotations(next);
+    if (persist) storageService.updateBookAnnotations(book.id, next);
+  };
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [currentRect, setCurrentRect] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
@@ -143,7 +151,11 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const [showCopySuccess, setShowCopySuccess] = useState(false);
   const [speakingMembers, setSpeakingMembers] = useState<Set<string>>(new Set());
   const [isChallengeOpen, setIsChallengeOpen] = useState(false);
-  const hasActiveChallenge = !!challengeService.getChallengeForBook(book.id);
+  // حالة بدل استدعاء الخدمة في كل render (القارئ يُعاد رسمه كل ثانية ومع كل حرف)
+  const [hasActiveChallenge, setHasActiveChallenge] = useState(() => !!challengeService.getChallengeForBook(book.id));
+  useEffect(() => {
+    setHasActiveChallenge(!!challengeService.getChallengeForBook(book.id));
+  }, [book.id, isChallengeOpen]);
   const challengeSyncRef = useRef<number>(0); // tracks last challenge sync time
   const [peers, setPeers] = useState<Record<string, Peer.Instance>>({});
   const streamRef = useRef<MediaStream | null>(null);
@@ -166,6 +178,14 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const controlsTimeoutRef = useRef<number | null>(null);
   const enqueueWindowRef = useRef<any>(null);
   const pageReadyRef = useRef(false);
+  // قيم حيّة لاستخدامها داخل المؤقّت (الـ closure القديم كان يرسل الصفحة 0 والإنجاز 0% للمنافسة)
+  const currentPageRef = useRef(currentPage);
+  const totalPagesRef = useRef(totalPages);
+  currentPageRef.current = currentPage;
+  totalPagesRef.current = totalPages;
+  const getLiveStars = () => {
+    try { return storageService.getBooks().find(b => b.id === book.id)?.stars || book.stars || 0; } catch { return book.stars || 0; }
+  };
   const t = translations[lang];
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
@@ -198,10 +218,10 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
               if (next % 60 === 0 && challengeService.getChallengeForBook(book.id)) {
                 challengeService.syncProgress(
                   book.id,
-                  currentPage,
-                  totalPages,
+                  currentPageRef.current,
+                  totalPagesRef.current,
                   Math.floor(next / 60),
-                  book.stars || 0
+                  getLiveStars()
                 );
               }
             }
@@ -483,7 +503,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     const { x, y } = getRelativeCoords(clientX, clientY);
     if (activeTool === 'note') {
       const newNote: Annotation = { id: Math.random().toString(36).substr(2, 9), type: 'note', pageIndex: currentPage, x, y, text: '', title: '', color: activeColor };
-      setAnnotations(prev => [...prev, newNote]); setEditingAnnoId(newNote.id); return;
+      applyAnnotations([...annotationsRef.current, newNote], false); setEditingAnnoId(newNote.id); return;
     }
     setIsDrawing(true); setStartPos({ x, y }); setCurrentRect({ x, y, w: 0, h: 0 });
   };
@@ -510,26 +530,51 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         color: activeColor, 
         text: '', title: '' 
       };
-      const updated = [...annotations, newAnno];
-      setAnnotations(updated); storageService.updateBookAnnotations(book.id, updated);
+      applyAnnotations([...annotationsRef.current, newAnno], true);
       setEditingAnnoId(newAnno.id);
     }
     setIsDrawing(false); setCurrentRect(null);
   };
-  const currentEditingAnno = annotations.find(a => a.id === editingAnnoId);
-  // ── OPTIMIZED: Separate UI state from heavy persistence ──
-  // Update React state instantly for responsive keyboard,
-  // debounce the storage write so it only fires after typing pauses.
-  const annotationSaveTimer = useRef<number | null>(null);
-  const updateEditingAnnotation = useCallback((updates: Partial<Annotation>) => {
-    const updated = annotations.map(a => a.id === editingAnnoId ? { ...a, ...updates } : a);
-    setAnnotations(updated); // Instant UI update — zero lag
-    // Debounce the heavy storage call (800ms after last keystroke)
-    if (annotationSaveTimer.current) clearTimeout(annotationSaveTimer.current);
-    annotationSaveTimer.current = window.setTimeout(() => {
-      storageService.updateBookAnnotations(book.id, updated);
-    }, 800);
-  }, [annotations, editingAnnoId, book.id]);
+  // ── ZERO-LAG ANNOTATIONS ──
+  // • الكتابة نفسها تتم داخل <AnnotationEditor/> بحالة محلية معزولة (لا يُعاد رسم القارئ مع كل حرف).
+  // • إلى القارئ/التخزين يصل التعديل مرة واحدة بعد توقف الكتابة أو عند الإغلاق.
+  // • مرجع annotationsRef يمنع قراءة نسخة قديمة داخل الـ closures.
+  const currentEditingAnno = useMemo(
+    () => (editingAnnoId ? annotations.find(a => a.id === editingAnnoId) : undefined),
+    [annotations, editingAnnoId]
+  );
+  const annotationsForPage = useMemo(
+    () => annotations.filter(a => a.pageIndex === currentPage),
+    [annotations, currentPage]
+  );
+  const commitAnnotationPatch = useCallback((id: string, patch: AnnotationPatch) => {
+    const next = annotationsRef.current.map(a => a.id === id ? { ...a, ...patch } : a);
+    applyAnnotations(next, true);
+  }, [book.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const deleteAnnotation = useCallback((id: string) => {
+    applyAnnotations(annotationsRef.current.filter(a => a.id !== id), true);
+    setEditingAnnoId(null);
+  }, [book.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeEditor = useCallback((saved: boolean) => {
+    setEditingAnnoId(null);
+    if (saved) setActiveTool('view');
+  }, []);
+  const goToAnnotationFromIndex = useCallback((pageIndex: number) => {
+    handlePageChange(pageIndex);
+    setIsArchiveOpen(false);
+  }, [currentPage, totalPages]); // eslint-disable-line react-hooks/exhaustive-deps
+  const editAnnotationFromIndex = useCallback((id: string) => {
+    setEditingAnnoId(id);
+    setIsArchiveOpen(false);
+  }, []);
+  // عند فتح لوحة الصدارة: ادفع تقدّمك الحالي فوراً (محلياً أولاً) كي يظهر صفّك مباشرة
+  useEffect(() => {
+    if (!isChallengeOpen) return;
+    challengeService.syncProgress(
+      book.id, currentPageRef.current, totalPagesRef.current,
+      Math.floor(sessionSecondsRef.current / 60), getLiveStars()
+    );
+  }, [isChallengeOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   // Removed periodic 60s auto-save to prevent double counting and ensure 
   // that we only save once on exit with the full accurate session time.
   // This also fixes the "0m" notification bug by ensuring the full session 
@@ -553,10 +598,10 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                 if (challengeService.getChallengeForBook(book.id)) {
                   challengeService.syncProgress(
                     book.id,
-                    currentPage,
-                    totalPages,
+                    currentPageRef.current,
+                    totalPagesRef.current,
                     Math.floor(sessionSecondsRef.current / 60),
-                    book.stars || 0
+                    getLiveStars()
                   );
                 }
                 onBackRef.current();
@@ -650,7 +695,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
               </MotionDiv>
             </AnimatePresence>
             <div className="absolute inset-0 pointer-events-none">
-              {annotations.filter(a => a.pageIndex === currentPage).map(anno => (
+              {annotationsForPage.map(anno => (
                 <div key={anno.id} className="absolute pointer-events-auto cursor-pointer" onClick={() => setEditingAnnoId(anno.id)} style={{
                   left: `${anno.x}%`,
                   top: `${anno.y}%`,
@@ -715,61 +760,27 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
       </div>
       <AnimatePresence>
         {isArchiveOpen && (
-          <MotionDiv key="archive" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/40 backdrop-blur-[40px] p-6 flex items-center justify-center pointer-events-auto">
-             <MotionDiv initial={{ y: 50 }} animate={{ y: 0 }} className="w-full max-w-xl bg-[#0b140b] border border-white/10 rounded-[2.5rem] p-6 max-h-[85vh] overflow-hidden flex flex-col shadow-4xl relative">
-                <div className="flex justify-between items-center mb-6 shrink-0">
-                  <h2 className="text-lg font-black italic uppercase tracking-tighter text-white/60">{t.wisdomIndex}</h2>
-                  <button onClick={() => setIsArchiveOpen(false)} className="hover:text-red-600 transition-colors p-1.5 bg-white/5 rounded-full"><X size={16}/></button>
-                </div>
-                <div className="flex-1 overflow-y-auto custom-scroll space-y-2 pr-1">
-                  {annotations.length === 0 ? <p className="text-center opacity-20 py-20 uppercase font-black tracking-widest text-xs">{t.noAnnotations}</p> : 
-                    [...annotations].sort((a,b) => a.pageIndex - b.pageIndex).map(anno => (
-                    <div key={anno.id} className="p-3.5 bg-white/[0.03] rounded-xl border border-white/5 hover:border-red-600/30 transition-all flex items-start justify-between gap-3">
-                      <div className="cursor-pointer flex-1" onClick={() => { handlePageChange(anno.pageIndex); setIsArchiveOpen(false); }}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: anno.color }} />
-                          <span className="text-[8px] font-black text-red-600 uppercase tracking-widest">{t.page} {anno.pageIndex + 1}</span>
-                        </div>
-                        <h4 className="text-[10px] font-black text-white/90 truncate">{anno.title || '...'}</h4>
-                      </div>
-                      <button onClick={() => { setEditingAnnoId(anno.id); setIsArchiveOpen(false); }} className="p-2 text-white/20 hover:text-white transition-all rounded-lg bg-white/5"><Edit3 size={12} /></button>
-                    </div>
-                  ))}
-                </div>
-             </MotionDiv>
-          </MotionDiv>
+          <WisdomIndex
+            key="archive"
+            lang={lang}
+            annotations={annotations}
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onClose={() => setIsArchiveOpen(false)}
+            onGoTo={goToAnnotationFromIndex}
+            onEdit={editAnnotationFromIndex}
+          />
         )}
         {editingAnnoId && currentEditingAnno && (
-          <MotionDiv key="editing-anno" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[4000] bg-black/60 backdrop-blur-xl flex items-center justify-center p-6 pointer-events-auto">
-            <MotionDiv initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-black/40 backdrop-blur-2xl border border-white/10 p-5 rounded-[2rem] w-full max-w-[300px] shadow-5xl flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                 <h3 className="text-xs font-black uppercase text-white/90">{isRTL ? 'بيانات التعديل' : 'Modification Details'}</h3>
-                 <button onClick={() => setEditingAnnoId(null)} className="p-1.5 rounded-full bg-white/5 text-white/30 hover:text-white"><X size={14}/></button>
-              </div>
-              <div className="space-y-3 flex-1 overflow-y-auto no-scrollbar pr-1">
-                <input type="text" value={currentEditingAnno.title || ''} onChange={(e) => updateEditingAnnotation({ title: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-[10px] font-bold text-white outline-none focus:border-red-600/50" placeholder={isRTL ? 'عنوان التعديل...' : 'Entry Title...'} />
-                <textarea value={currentEditingAnno.text || ''} onChange={(e) => updateEditingAnnotation({ text: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-[10px] font-bold text-white outline-none focus:border-red-600/50 min-h-[70px] resize-none" placeholder={isRTL ? 'ملاحظات استخلاص الحكمة...' : 'Wisdom Notes...'} />
-                <div className="flex flex-wrap gap-1.5">{COLORS.map(c => (<button key={c.hex} onClick={() => updateEditingAnnotation({ color: c.hex })} className={`w-5 h-5 rounded-full border transition-all ${currentEditingAnno.color === c.hex ? 'border-white scale-110 shadow-[0_0_8px_white]' : 'border-transparent opacity-60'}`} style={{ backgroundColor: c.hex }} />))}</div>
-              </div>
-              <div className="flex gap-2 mt-4 pt-3 border-t border-white/5">
-                <button 
-                  onClick={() => { 
-                    const confirmMsg = isRTL ? 'هل أنت متأكد من مسح هذه الملاحظة نهائياً؟' : 'Are you sure you want to delete this note permanently?';
-                    if (window.confirm(confirmMsg)) {
-                      const updated = annotations.filter(a => a.id !== editingAnnoId);
-                      setAnnotations(updated);
-                      storageService.updateBookAnnotations(book.id, updated);
-                      setEditingAnnoId(null); 
-                    }
-                  }} 
-                  className="w-9 h-9 bg-red-600/10 border border-red-600/20 text-red-600 rounded-lg flex items-center justify-center hover:bg-red-600 hover:text-white transition-all"
-                >
-                  <Trash2 size={14}/>
-                </button>
-                <button onClick={() => { storageService.updateBookAnnotations(book.id, annotations); if (annotationSaveTimer.current) { clearTimeout(annotationSaveTimer.current); annotationSaveTimer.current = null; } setEditingAnnoId(null); setActiveTool('view'); }} className="flex-1 bg-white text-black py-2 rounded-lg font-black uppercase text-[8px] tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2"><Check size={12}/>{isRTL ? 'حفظ بالفهرس' : 'Save to Index'}</button>
-              </div>
-            </MotionDiv>
-          </MotionDiv>
+          <AnnotationEditor
+            key={`editing-${editingAnnoId}`}
+            lang={lang}
+            annotation={currentEditingAnno}
+            colors={COLORS}
+            onCommit={commitAnnotationPatch}
+            onDelete={deleteAnnotation}
+            onClose={closeEditor}
+          />
         )}
         {isGoToPageOpen && (
           <MotionDiv key="goto-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[3000] bg-black/60 backdrop-blur-[40px] flex items-center justify-center p-6 pointer-events-auto">
