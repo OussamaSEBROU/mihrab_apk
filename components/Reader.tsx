@@ -98,7 +98,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const [currentPage, setCurrentPage] = useState(book.lastPage || 0);
   const [isLoading, setIsLoading] = useState(false);
   const [totalPages, setTotalPages] = useState(0);
-  
   const [activeTool, setActiveTool] = useState<Tool>('view');
   const [activeColor, setActiveColor] = useState(COLORS[0].hex);
   const [annotations, setAnnotations] = useState<Annotation[]>(book.annotations || []);
@@ -113,7 +112,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const [toolDock, setToolDock] = useState<'top' | 'bottom'>('bottom');
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [currentRect, setCurrentRect] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
-  
   const [editingAnnoId, setEditingAnnoId] = useState<string | null>(null);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isGoToPageOpen, setIsGoToPageOpen] = useState(false);
@@ -163,7 +161,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const streamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Record<string, Peer.Instance>>({});
   const isAdmin = socket && roomData?.adminId === userId;
-  
   const initialPinchDistance = useRef<number | null>(null);
   const initialScaleOnPinch = useRef<number>(1);
   const timerRef = useRef<number | null>(null);
@@ -723,7 +720,6 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
         <AnimatePresence>
           {showControls && (
             <MotionDiv key="bottom-controls" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: isDrawing || isPinching ? 0 : 1 }} exit={{ y: 20, opacity: 0 }} transition={{ duration: 0.12 }} style={{ pointerEvents: isDrawing || isPinching ? 'none' : 'auto' }} className="flex flex-col items-center gap-4 pointer-events-auto">
-              
               <div className="bg-red-600/10 border border-red-600/30 px-5 py-1.5 rounded-full backdrop-blur-xl flex items-center gap-2 shadow-2xl">
                  <Clock size={12} className="text-red-600 animate-pulse" />
                  <span className="text-[10px] md:text-xs font-black text-red-600 tracking-widest">{Math.floor(sessionSeconds/60)}m</span>
