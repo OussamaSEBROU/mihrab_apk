@@ -16,6 +16,7 @@ import { DeepSessionComplete } from './components/DeepSessionComplete';
 import { deepSessionService } from './services/deepSessionService';
 import { translations } from './i18n/translations';
 import { storageService } from './services/storageService';
+import { badgeStore } from './services/badgeStore';
 import { pdfStorage, computeFileHash } from './services/pdfStorage';
 import { setupMobile, triggerHaptic } from './services/mobileService';
 import { communityService } from './services/communityService';
@@ -171,7 +172,8 @@ const App: React.FC = () => {
     }
   }, [lang]);
   const [sessionStartTime] = useState<number>(Date.now());
-  const [books, setBooks] = useState<Book[]>([]);
+  // حالة أولية متزامنة من التخزين: لا نبدأ بقائمة فارغة (كانت تُظهر "لا توجد أوسمة" لحظياً ثم تعود)
+  const [books, setBooks] = useState<Book[]>(() => { try { return storageService.getBooks(); } catch { return []; } });
   const [shelves, setShelves] = useState<ShelfData[]>([]);
   const [activeShelfId, setActiveShelfId] = useState<string>('default');
   const [shelfSwipeDirection, setShelfSwipeDirection] = useState<'next' | 'prev'>('next');
@@ -346,8 +348,11 @@ const App: React.FC = () => {
             } catch { /* non-critical — will retry next launch */ }
           }
           if (migrated) {
-            setBooks(updatedBooks);
-            storageService.saveBooks(updatedBooks);
+            // دمج البصمات في أحدث نسخة مخزنة (وليس اللقطة القديمة) كي لا نمسح تقدّم القراءة/الأوسمة المحقَّقة أثناء الحساب
+            const hashById = new Map(updatedBooks.map(b => [b.id, b.contentHash]));
+            const fresh = storageService.getBooks().map(b => (!b.contentHash && hashById.get(b.id)) ? { ...b, contentHash: hashById.get(b.id) } : b);
+            setBooks(fresh);
+            storageService.saveBooks(fresh);
             console.log(`✅ تم ترحيل ${booksNeedingHash.length} كتاب إلى نظام البصمة الرقمية SHA-256`);
           }
         })();
@@ -373,7 +378,7 @@ const App: React.FC = () => {
       const book = filteredBooks[activeBookIndex];
       return {
         minutes: Math.floor(book.timeSpentSeconds / 60),
-        stars: book.stars || 0
+        stars: badgeStore.getEarned(book)
       };
     }
     return { minutes: 0, stars: 0 };
