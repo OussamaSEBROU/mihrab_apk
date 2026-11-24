@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import type { Book, FlashCard, ShelfData, Annotation, HabitData } from '../types';
 import { getGMTDateString } from './notificationService';
 import { getDB } from './pdfStorage';
+import { badgeStore } from './badgeStore';
 
 const STORAGE_KEYS = {
   BOOKS: 'sanctuary_books',
@@ -203,7 +204,8 @@ export const storageService = {
     if (!_booksCache) {
       const data = localStorage.getItem(STORAGE_KEYS.BOOKS);
       const raw: Book[] = data ? JSON.parse(data) : [];
-      _booksCache = raw.map(b => ({
+      // الأوسمة: نمرّر كل كتاب عبر badgeStore كي لا يعود أي كتاب بعدد أوسمة أقل مما استحقه فعلاً
+      _booksCache = raw.map(b => badgeStore.stabilize({
         ...b,
         shelfId: b.shelfId || 'default',
         annotations: b.annotations || []
@@ -214,6 +216,15 @@ export const storageService = {
   },
   
   saveBooks: (books: Book[], skipSync: boolean = false) => {
+    // ── ثبات الأوسمة: أي حفظ قادم من حالة React قديمة لا يستطيع إنقاص الأوسمة ──
+    const prevIds = _booksCache ? _booksCache.map(b => b.id) : [];
+    if (books.length === 0) {
+      badgeStore.clearAll(); // مسح شامل صريح
+    } else {
+      const nextIds = new Set(books.map(b => b.id));
+      prevIds.forEach(id => { if (!nextIds.has(id)) badgeStore.forget(id); }); // كتب محذوفة فقط
+    }
+    books = books.map(b => badgeStore.stabilize(b));
     _booksCache = books;
     localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
     
@@ -231,6 +242,7 @@ export const storageService = {
   },
 
   deleteBook: (bookId: string) => {
+    badgeStore.forget(bookId);
     const books = storageService.getBooks();
     storageService.saveBooks(books.filter(b => b.id !== bookId));
   },
@@ -257,17 +269,23 @@ export const storageService = {
       clearTimeout(storageService._annotationDebounceTimers[bookId]);
     }
     storageService._annotationDebounceTimers[bookId] = setTimeout(() => {
-      // localStorage write (from memory cache — always fresh)
-      try {
-        const books = storageService.getBooks();
-        localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
-        // IndexedDB persistence
-        _persistToIDB(STORAGE_KEYS.BOOKS, books).catch(() => {});
-        // Filesystem backup for native platforms
-        _persistToFilesystem('backup_books.json', books);
-        // Cloud sync
-        syncBridge.syncFull(books, storageService.getShelves(), 'Annotation Update');
-      } catch {}
+      // الكتابة الثقيلة (JSON.stringify لكل الكتب + IDB + ملفات + سحابة) تُنفَّذ وقت فراغ المعالج
+      // حتى لا تتقاطع أبداً مع إدخال الحروف في لوحة المفاتيح.
+      const flush = () => {
+        try {
+          const books = storageService.getBooks();
+          localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
+          // IndexedDB persistence
+          _persistToIDB(STORAGE_KEYS.BOOKS, books).catch(() => {});
+          // Filesystem backup for native platforms
+          _persistToFilesystem('backup_books.json', books);
+          // Cloud sync
+          syncBridge.syncFull(books, storageService.getShelves(), 'Annotation Update');
+        } catch {}
+      };
+      const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => number);
+      if (typeof ric === 'function') ric(flush, { timeout: 2500 });
+      else setTimeout(flush, 0);
       delete storageService._annotationDebounceTimers[bookId];
     }, 500);
   },
@@ -288,8 +306,10 @@ export const storageService = {
 
     if (index !== -1) {
       const today = getToday(); // GMT-based
-      const book = books[index];
-      const oldStars = book.stars || 0;
+      // نسخة جديدة بدل التعديل في المكان: لا نغيّر كائنات تحتفظ بها حالة React بصمت
+      const book = { ...books[index] };
+      books[index] = book;
+      const oldStars = badgeStore.getEarned(book);
 
       if (book.lastReadDate !== today) {
         book.dailyTimeSeconds = 0;
@@ -311,6 +331,9 @@ export const storageService = {
         if (book.timeSpentSeconds >= threshold) stars++;
         else break;
       }
+      // الوسام لا يتراجع أبداً (يمنع الاختفاء/إعادة الاحتفال بنجمة سبق تحصيلها)
+      stars = Math.max(stars, oldStars);
+      badgeStore.record(book.id, stars);
       
       if (stars > oldStars) {
         starReached = stars;
