@@ -3,7 +3,7 @@
 // Professional glassmorphism leaderboard inside the Reader
 // ══════════════════════════════════════════════════════════════
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Clock, BookOpen, X,
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { Language } from '../types';
 import { challengeService } from '../services/challengeService';
+import { readingClubAuth } from '../services/readingClubAuth';
 import type { ChallengeParticipant } from '../types/challenge';
 
 const MotionDiv = motion.div as any;
@@ -36,34 +37,55 @@ interface Props {
 
 export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }: Props) {
   const isRTL = lang === 'ar';
-  const [participants, setParticipants] = useState<ChallengeParticipant[]>([]);
+  // بدء فوري من الذاكرة المحلية: لا شاشة "لا يوجد متنافسون" أثناء انتظار الشبكة
+  const [participants, setParticipants] = useState<ChallengeParticipant[]>(() => challengeService.getCachedLeaderboard(bookId));
   const [isLoading, setIsLoading] = useState(false);
+  const [hasFetched, setHasFetched] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
-  const refreshTimerRef = useRef<number | null>(null);
 
+  // الكائنات هنا مستقرة (ذاكرة وسيطة في الخدمة) — ونعتمد على المعرّف لا على هوية الكائن
   const challenge = challengeService.getChallengeForBook(bookId);
+  const challengeId = challenge?.id || null;
+  const myId = useMemo(() => readingClubAuth.getLocalProfile()?.id || '', []);
 
-  const fetchData = useCallback(async () => {
-    if (!challenge) return;
+  const aliveRef = useRef(true);
+  const reqTokenRef = useRef(0);
+  const lastFetchAtRef = useRef(0);
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
+
+  const fetchData = useCallback(async (force = false) => {
+    if (!challengeId) return;
+    // تقليل الضغط: لا أكثر من جلب كل 8 ثوانٍ إلا عند الطلب الصريح
+    const now = Date.now();
+    if (!force && now - lastFetchAtRef.current < 8000) return;
+    lastFetchAtRef.current = now;
+    const token = ++reqTokenRef.current;
     setIsLoading(true);
     try {
       const data = await challengeService.fetchLeaderboard(bookId);
-      setParticipants(data);
+      if (aliveRef.current && token === reqTokenRef.current) setParticipants(data);
     } catch {
-      if (challenge) setParticipants(challenge.participants || []);
+      /* نُبقي ما هو معروض — لا نفرغ القائمة عند فشل الشبكة */
+    } finally {
+      if (aliveRef.current && token === reqTokenRef.current) { setIsLoading(false); setHasFetched(true); }
     }
-    setIsLoading(false);
-  }, [bookId, challenge]);
+  }, [bookId, challengeId]);
 
-  // Auto-refresh every 60 seconds when panel is open
+  // يعمل عند الفتح فقط (وليس عند كل render): جلب أولي + تحديث كل 60 ثانية + تحديث عند عودة التطبيق للواجهة
   useEffect(() => {
-    if (!isOpen || !challenge) return;
-    fetchData();
-    refreshTimerRef.current = window.setInterval(fetchData, 60000);
+    if (!isOpen || !challengeId) return;
+    setParticipants(challengeService.getCachedLeaderboard(bookId));
+    fetchData(true);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') fetchData(true);
+    }, 60000);
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchData(false); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [isOpen, fetchData, challenge]);
+  }, [isOpen, challengeId, bookId, fetchData]);
 
   const handleLeave = useCallback(async () => {
     const msg = isRTL
@@ -93,7 +115,7 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
         >
           {/* Backdrop — click to close */}
           <div
-            className="absolute inset-0 bg-black/85 backdrop-blur-xl"
+            className="absolute inset-0 bg-black/85 backdrop-blur-md"
             onClick={onToggle}
           />
 
@@ -154,7 +176,13 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
 
             {/* ═══ PARTICIPANTS LIST ═══ */}
             <div className="flex-1 overflow-y-auto custom-scroll">
-              {participants.length === 0 ? (
+              {participants.length === 0 && !hasFetched ? (
+                <div className="p-3 space-y-2" aria-busy="true">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="h-[68px] rounded-2xl bg-white/[0.03] border border-white/5 animate-pulse" />
+                  ))}
+                </div>
+              ) : participants.length === 0 ? (
                 <div className="py-16 flex flex-col items-center justify-center gap-4">
                   <div className="w-20 h-20 rounded-full bg-white/[0.02] border border-white/5 flex items-center justify-center">
                     <Users size={32} className="text-white/8" />
@@ -206,6 +234,11 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
                               <span className="text-sm font-black text-white truncate">
                                 {p.name}
                               </span>
+                              {myId && p.userId === myId && (
+                                <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/25 text-[8px] font-black text-amber-400">
+                                  {isRTL ? 'أنت' : 'You'}
+                                </span>
+                              )}
                               <span className="text-sm shrink-0">
                                 {FLAG_EMOJIS[p.country] || '🌍'}
                               </span>
@@ -254,7 +287,7 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
                         {/* Progress bar at bottom of card */}
                         <div className="h-1 bg-white/[0.02]">
                           <div
-                            className="h-full transition-all duration-1000 ease-out"
+                            className="h-full transition-[width] duration-700 ease-out"
                             style={{
                               width: `${Math.min(100, p.percentComplete)}%`,
                               background: isFirst
