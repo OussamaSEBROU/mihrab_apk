@@ -35,6 +35,17 @@ const stdev = (a: number[]) => {
   const mu = mean(a);
   return Math.sqrt(a.reduce((x, y) => x + (y - mu) ** 2, 0) / a.length);
 };
+/** آخر ظهور بصيغة نسبية */
+const ago = (t: number, ar: boolean): string => {
+  const d = Math.max(0, Date.now() - t);
+  const m = Math.floor(d / 60000);
+  if (m < 2) return ar ? 'نشط الآن' : 'Active now';
+  if (m < 60) return ar ? `قبل ${m} د` : `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return ar ? `قبل ${h} س` : `${h}h ago`;
+  const dd = Math.floor(h / 24);
+  return ar ? `قبل ${dd} يوم` : `${dd}d ago`;
+};
 const fmt = (n: number, d = 1) => (Number.isFinite(n) ? (Math.abs(n) >= 100 ? Math.round(n).toString() : n.toFixed(d).replace(/\.0+$/, '')) : '—');
 
 /** ميل الانحدار الخطي للقيمة مقابل الزمن (وحدة/يوم) */
@@ -363,6 +374,7 @@ const ChallengeAnalytics: React.FC<Props> = ({ lang }) => {
                 >
                   <i className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: colorOf.get(p.userId) }} />
                   <span className="max-w-[110px] truncate">{p.name}</span>
+                  <span className="text-[9px] font-bold text-white/30">{ago(p.lastUpdated, isRTL)}</span>
                   {p.userId === myId && <span className="text-amber-400">{isRTL ? 'أنت' : 'You'}</span>}
                 </button>
               );
@@ -438,7 +450,12 @@ const ChallengeAnalytics: React.FC<Props> = ({ lang }) => {
                     <td className="p-3">
                       <span className="flex items-center gap-2 font-black">
                         <i className="w-2.5 h-2.5 rounded-full inline-block shrink-0" style={{ backgroundColor: colorOf.get(r.p.userId) }} />
-                        <span className="truncate max-w-[120px]">{r.p.name}</span>
+                        <span className="flex flex-col min-w-0">
+                          <span className="truncate max-w-[120px]">{r.p.name}</span>
+                          <span className={`text-[9px] font-bold ${Date.now() - r.p.lastUpdated < 600000 ? 'text-emerald-400' : 'text-white/30'}`}>
+                            {ago(r.p.lastUpdated, isRTL)}
+                          </span>
+                        </span>
                       </span>
                     </td>
                     <td className="p-3 font-black tabular-nums">{fmt(r.value)}{unit}</td>
