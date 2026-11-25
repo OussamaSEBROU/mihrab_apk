@@ -286,11 +286,11 @@ export const challengeService = {
         return { success: false, error: 'Challenge not found' };
       }
 
-      // Verify same book
+      // لا نمنع الانضمام أبداً عند اختلاف معرّف الكتاب: المعرّف مشتق من بصمة ملف PDF، فتختلف
+      // قيمته بين نسختين (طبعة/ضغط/تصدير مختلف) أو مع كتب قديمة، رغم أنه الكتاب نفسه.
+      // الكتاب الذي فتح المستخدم نافذة المنافسة منه هو المرجع، والتقدّم يُربط بمعرّف المجموعة لا بمعرّف الكتاب.
       if (group.currentBookId && group.currentBookId !== bookId) {
-        return { success: false, error: 'ar' === 'ar'
-          ? 'هذه المنافسة لكتاب مختلف. تأكد أنك تملك نفس الكتاب.'
-          : 'This challenge is for a different book.' };
+        console.warn('[Challenge] Book id differs from creator\'s; joining anyway', group.currentBookId, bookId);
       }
 
       saveIdentity(identity);
