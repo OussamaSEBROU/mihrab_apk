@@ -7,6 +7,7 @@ import { readingClubAuth } from './readingClubAuth';
 import { clubGroupsAPI, clubInvitesAPI, clubMembersAPI, clubMessagesAPI } from './readingClubAPI';
 import { readingClubSync } from './readingClubSync';
 import type {
+  ChallengePoint,
   BookChallenge, ChallengeIdentity, ChallengeParticipant,
   ChallengeProgressMessage
 } from '../types/challenge';
@@ -62,6 +63,20 @@ function once<T>(key: string, factory: () => Promise<T>): Promise<T> {
 // آخر حالة أُرسلت للسحابة لكل كتاب (لتجنب رسائل مكررة تملأ نافذة الـ 200 رسالة)
 const _lastSent = new Map<string, { sig: string; at: number }>();
 const HEARTBEAT_MS = 5 * 60 * 1000;
+
+// ── سجل التقدّم: دمج بالاتحاد (حسب الوقت) مع تخفيف ذكي للحفاظ على الشكل العام ──
+const MAX_HISTORY = 160;
+const mergeHistory = (a: ChallengePoint[] = [], b: ChallengePoint[] = []): ChallengePoint[] => {
+  const byT = new Map<number, ChallengePoint>();
+  for (const pt of a) byT.set(pt.t, pt);
+  for (const pt of b) byT.set(pt.t, pt);
+  const all = Array.from(byT.values()).sort((x, y) => x.t - y.t);
+  if (all.length <= MAX_HISTORY) return all;
+  const step = (all.length - 1) / (MAX_HISTORY - 1);
+  const out: ChallengePoint[] = [];
+  for (let i = 0; i < MAX_HISTORY; i++) out.push(all[Math.round(i * step)]);
+  return out;
+};
 
 const sortParticipants = (list: ChallengeParticipant[]) =>
   [...list].sort((a, b) =>
@@ -125,6 +140,9 @@ export const challengeService = {
 
   // ─── Challenge CRUD ─────────────────────────────────────────
   getChallenges,
+
+  /** كل المنافسات المحلية (لوحة التحليل الذكي) */
+  getAll: (): BookChallenge[] => getChallenges(),
 
   getChallengeForBook: (bookId: string): BookChallenge | null => {
     return getChallenges().find(c => c.bookId === bookId) || null;
@@ -377,6 +395,14 @@ export const challengeService = {
     if (idx !== -1) {
       const list = challenges[idx].participants;
       const existing = list.findIndex(p => p.userId === userId);
+      // سجل المنحنى: نقطة جديدة فقط عند تغيّر القيم أو مرور 5 دقائق
+      const prevHistory = existing !== -1 ? (list[existing].history || []) : [];
+      const lastPt = prevHistory[prevHistory.length - 1];
+      const changed = !lastPt || lastPt.m !== readingMinutes || lastPt.p !== percentComplete || lastPt.s !== stars;
+      const newPt: ChallengePoint = { t: myParticipant.lastUpdated, m: readingMinutes, p: percentComplete, s: stars, sc: score };
+      myParticipant.history = (changed || myParticipant.lastUpdated - (lastPt?.t || 0) > HEARTBEAT_MS)
+        ? mergeHistory(prevHistory, [newPt])
+        : prevHistory;
       if (existing !== -1) list[existing] = myParticipant;
       else list.push(myParticipant);
       challenges[idx].lastSyncedAt = Date.now();
@@ -429,11 +455,24 @@ export const challengeService = {
       // ابدأ من النسخة المحلية ثم دع السحابة تتفوق عند كونها أحدث
       for (const p of challenge.participants || []) latestByUser.set(p.userId, p);
 
+      const seriesByUser = new Map<string, ChallengePoint[]>();
+
       for (const msg of messagesResult.data.messages) {
         const progress = isProgressMessage(msg.body || '');
         if (!progress) continue;
 
         const authorId = typeof msg.authorId === 'object' ? msg.authorId._id : msg.authorId;
+        // كل رسالة تقدّم = نقطة على منحنى صاحبها
+        const pts = seriesByUser.get(authorId) || [];
+        pts.push({
+          t: progress.timestamp,
+          m: progress.readingMinutes,
+          p: progress.percentComplete,
+          s: progress.stars,
+          sc: progress.readingMinutes + progress.percentComplete,
+        });
+        seriesByUser.set(authorId, pts);
+
         const existing = latestByUser.get(authorId);
 
         if (!existing || progress.timestamp > existing.lastUpdated) {
@@ -452,7 +491,12 @@ export const challengeService = {
         }
       }
 
-      const participants = sortParticipants(Array.from(latestByUser.values()));
+      // دمج السجل السحابي مع المحلي (النافذة 200 رسالة قد لا تحمل كل التاريخ)
+      const withHistory = Array.from(latestByUser.values()).map(p => ({
+        ...p,
+        history: mergeHistory(p.history || [], seriesByUser.get(p.userId) || []),
+      }));
+      const participants = sortParticipants(withHistory);
 
       // Update local cache
       const challenges = getChallenges();
