@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Language } from '../types';
 import type { Book, ShelfData } from '../types';
@@ -119,6 +119,55 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
     return { phase: 3, name: isRTL ? 'مرحلة الانصهار' : 'Integration Phase', color: '#10b981' };
   }, [habitData.streak, isRTL]);
 
+  // ── التنقّل السريع بين أجنحة اللوحة ──
+  const headerRef = useRef<HTMLElement>(null);
+  const [navOffset, setNavOffset] = useState(0);
+  const [navItems, setNavItems] = useState<{ id: string; label: string }[]>([]);
+  const [activeNav, setActiveNav] = useState<string>('');
+  const NAV_DEFS = useMemo(() => [
+    { id: 'smart', label: isRTL ? 'التحليل الذكي' : 'Smart' },
+    { id: 'competition', label: isRTL ? 'المنافسة' : 'Competition' },
+    { id: 'habit', label: isRTL ? 'مسار العادة' : 'Habit Path' },
+    { id: 'science', label: isRTL ? 'علم العادات' : 'Science' },
+    { id: 'resilience', label: isRTL ? 'المرونة' : 'Resilience' },
+    { id: 'growth', label: isRTL ? 'مقارنة الكتب' : 'Books' },
+    { id: 'badges', label: isRTL ? 'الأوسمة' : 'Badges' },
+    { id: 'merit', label: isRTL ? 'الاستحقاق' : 'Merit' },
+    { id: 'synergy', label: isRTL ? 'التآزر' : 'Synergy' },
+    { id: 'peak', label: isRTL ? 'ساعات الذروة' : 'Peak Hours' },
+    { id: 'zenith', label: isRTL ? 'القمة' : 'Zenith' },
+    { id: 'deep', label: isRTL ? 'القراءة العميقة' : 'Deep Log' },
+  ], [isRTL]);
+
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const measure = () => setNavOffset(el.offsetHeight + 46);
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
+
+  // إظهار الأجنحة الموجودة فعلاً فقط (بعضها مشروط) وتتبّع الجناح الظاهر
+  useEffect(() => {
+    const present = NAV_DEFS.filter(d => document.getElementById(`dash-${d.id}`));
+    setNavItems(prev => (prev.length === present.length && prev.every((x, i) => x.id === present[i].id && x.label === present[i].label)) ? prev : present);
+    if (!present.length || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((entries) => {
+      const vis = entries.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (vis) setActiveNav((vis.target as HTMLElement).id.replace('dash-', ''));
+    }, { rootMargin: '-25% 0px -60% 0px' });
+    present.forEach(d => { const n = document.getElementById(`dash-${d.id}`); if (n) io.observe(n); });
+    return () => io.disconnect();
+  }, [NAV_DEFS, books.length]);
+
+  const goToSection = useCallback((id: string) => {
+    const el = document.getElementById(`dash-${id}`);
+    if (!el) return;
+    setActiveNav(id);
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
   const handleClearAll = () => {
     storageService.saveBooks([]);
     window.location.reload(); 
@@ -130,7 +179,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       className="p-3 md:p-8 w-full max-w-7xl mx-auto space-y-8 md:space-y-24 mb-24 bg-[#020502] min-h-full"
     >
       {/* Header Sticky Bar */}
-      <header className="flex flex-col md:flex-row items-center justify-between gap-4 md:gap-6 sticky top-0 bg-[#020502]/95 backdrop-blur-3xl py-4 md:py-8 z-[100] border-b border-white/5 px-4 md:px-6 rounded-none md:rounded-b-[3rem] shadow-2xl">
+      <header ref={headerRef} className="flex flex-col md:flex-row items-center justify-between gap-4 md:gap-6 sticky top-0 bg-[#020502]/95 backdrop-blur-3xl py-4 md:py-8 z-[100] border-b border-white/5 px-4 md:px-6 rounded-none md:rounded-b-[3rem] shadow-2xl">
         <button onClick={onBack} className="self-start p-2.5 md:p-3 bg-white/5 rounded-full text-white/60 flex items-center gap-2 active:scale-95 transition-all hover:bg-[#ff0000]/20 hover:text-white border border-white/5">
           <ChevronLeft size={18} className={`${isRTL ? "rotate-180" : ""}`} />
           <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest">{t.backToShelf}</span>
@@ -149,6 +198,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
         </div>
       </header>
 
+      {/* Quick-jump navigation */}
+      {navItems.length > 1 && (
+        <nav
+          aria-label={isRTL ? 'التنقل بين الأجنحة' : 'Section navigation'}
+          className="sticky z-[90] bg-[#020502]/95 border-b border-white/5"
+          style={{ top: navOffset - 46, marginTop: 0 }}
+        >
+          <div className="flex gap-2 overflow-x-auto no-scrollbar py-2.5 px-1">
+            {navItems.map(n => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => goToSection(n.id)}
+                className={`shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-[10px] md:text-xs font-black border transition-colors ${
+                  activeNav === n.id ? 'bg-white text-black border-white' : 'bg-white/5 text-white/50 border-white/10 active:bg-white/10'
+                }`}
+              >
+                {n.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      )}
+
       {/* SECTION: SMART ANALYTICS SUMMARY */}
       {(() => {
         const summary48h = storageService.getAnalyticsSummary('48h');
@@ -166,7 +239,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
         const activeSummary = summary48h || summaryWeekly;
         
         return (
-          <section className="bg-gradient-to-br from-red-600/[0.06] via-white/[0.02] to-white/[0.01] border border-red-600/20 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-6 shadow-4xl relative overflow-hidden">
+          <section id="dash-smart" style={{ scrollMarginTop: navOffset + 12 }} className="bg-gradient-to-br from-red-600/[0.06] via-white/[0.02] to-white/[0.01] border border-red-600/20 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-6 shadow-4xl relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
               <BarChart3 size={200} />
             </div>
@@ -294,7 +367,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       })()}
 
       {/* SECTION 0: HABIT FORMATION PATH (NEW) */}
-      <section className="bg-white/[0.02] border border-white/10 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-8 shadow-4xl relative overflow-hidden">
+      <section id="dash-habit" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.02] border border-white/10 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-8 shadow-4xl relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-[0.02] pointer-events-none">
           <BrainCircuit size={200} />
         </div>
@@ -412,7 +485,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION: THE SCIENCE OF HABIT FORMATION */}
-      <section className="bg-white/[0.01] border border-white/5 p-6 md:p-16 rounded-[2rem] md:rounded-[5rem] space-y-10 relative overflow-hidden">
+      <section id="dash-science" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.01] border border-white/5 p-6 md:p-16 rounded-[2rem] md:rounded-[5rem] space-y-10 relative overflow-hidden">
         <div className="flex items-center gap-6 relative z-10">
           <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
             <BrainCircuit className="text-purple-500 size-6 md:size-8" />
@@ -456,7 +529,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION: RESILIENCE & RECOVERY PROTOCOL */}
-      <section className="bg-white/[0.01] border border-white/5 p-6 md:p-16 rounded-[2rem] md:rounded-[5rem] space-y-10 relative overflow-hidden">
+      <section id="dash-resilience" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.01] border border-white/5 p-6 md:p-16 rounded-[2rem] md:rounded-[5rem] space-y-10 relative overflow-hidden">
         <div className="flex items-center gap-6 relative z-10">
           <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
             <ShieldCheck className="text-blue-500 size-6 md:size-8" />
@@ -544,7 +617,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION 1: INDIVIDUAL MANUSCRIPT EVOLUTION (BARS) */}
-      <section className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-4xl relative overflow-hidden">
+      <section id="dash-growth" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-4xl relative overflow-hidden">
         <div className="flex items-center gap-4 md:gap-6 relative z-10">
           <div className="p-3 md:p-4 bg-white/5 rounded-xl md:rounded-2xl border border-white/10">
             <BarChart3 className="text-[#ef4444] size-5 md:size-8" />
@@ -598,7 +671,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION 1.5: MANUSCRIPT BADGES (NEW) */}
-      <section className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-4xl relative overflow-hidden">
+      <section id="dash-badges" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-4xl relative overflow-hidden">
         <div className="flex items-center gap-4 md:gap-6 relative z-10">
           <div className="p-3 md:p-4 bg-white/5 rounded-xl md:rounded-2xl border border-white/10">
             <ShieldCheck className="text-yellow-500 size-5 md:size-8" />
@@ -646,7 +719,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION 1.7: BADGE CRITERIA TABLE (NEW) */}
-      <section className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-4xl relative overflow-hidden">
+      <section id="dash-merit" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-4xl relative overflow-hidden">
         <div className="flex items-center gap-4 md:gap-6 relative z-10">
           <div className="p-3 md:p-4 bg-white/5 rounded-xl md:rounded-2xl border border-white/10">
             <LayoutPanelTop className="text-red-600 size-5 md:size-8" />
@@ -713,7 +786,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION 2: NEURAL SYNERGY FLOW (LINE CHART) */}
-      <section className="bg-white/[0.01] border border-white/5 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 relative overflow-hidden shadow-3xl">
+      <section id="dash-synergy" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.01] border border-white/5 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 relative overflow-hidden shadow-3xl">
         <div className="absolute top-0 right-0 p-6 md:p-16 opacity-[0.03] pointer-events-none rotate-12">
           <LineChart size={window.innerWidth < 768 ? 150 : 350} />
         </div>
@@ -797,7 +870,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION 3: CHRONO-PEAK ANALYSIS */}
-      <section className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-2xl relative">
+      <section id="dash-peak" style={{ scrollMarginTop: navOffset + 12 }} className="bg-white/[0.02] border border-white/10 p-5 md:p-20 rounded-[1.5rem] md:rounded-[5rem] space-y-8 md:space-y-16 shadow-2xl relative">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 md:gap-8">
           <div className="flex items-center gap-4 md:gap-6">
             <div className="p-3 md:p-4 bg-white/5 rounded-xl md:rounded-2xl border border-white/10">
@@ -837,7 +910,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </section>
 
       {/* SECTION 4: GLOBAL SUMMARY ZENITH */}
-      <section className="bg-gradient-to-br from-[#ff0000]/[0.05] via-[#020502] to-[#020502] border border-white/5 p-8 md:p-24 rounded-[3rem] md:rounded-[6rem] shadow-[0_50px_150px_rgba(0,0,0,0.8)] relative overflow-hidden">
+      <section id="dash-zenith" style={{ scrollMarginTop: navOffset + 12 }} className="bg-gradient-to-br from-[#ff0000]/[0.05] via-[#020502] to-[#020502] border border-white/5 p-8 md:p-24 rounded-[3rem] md:rounded-[6rem] shadow-[0_50px_150px_rgba(0,0,0,0.8)] relative overflow-hidden">
         <div className="absolute bottom-0 left-0 w-full h-2 bg-gradient-to-r from-transparent via-[#ff0000]/30 to-transparent" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] md:w-[800px] h-[600px] md:h-[800px] bg-[#ff0000]/5 rounded-full blur-[150px] md:blur-[200px] pointer-events-none" />
         <div className="absolute top-0 right-0 p-6 md:p-24 opacity-[0.05] pointer-events-none">
@@ -924,7 +997,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
         const chartAreaPath = chartPath + ` L ${chartPoints[chartPoints.length - 1]?.x || 0} ${chartH - 20} L ${chartPoints[0]?.x || 0} ${chartH - 20} Z`;
         
         return (
-          <section className="bg-gradient-to-br from-purple-600/[0.04] via-white/[0.02] to-white/[0.01] border border-purple-600/20 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-8 shadow-4xl relative overflow-hidden">
+          <section id="dash-deep" style={{ scrollMarginTop: navOffset + 12 }} className="bg-gradient-to-br from-purple-600/[0.04] via-white/[0.02] to-white/[0.01] border border-purple-600/20 p-5 md:p-12 rounded-[1.5rem] md:rounded-[4rem] space-y-8 shadow-4xl relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
               <Timer size={200} />
             </div>
