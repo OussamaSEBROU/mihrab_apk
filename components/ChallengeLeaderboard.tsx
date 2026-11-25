@@ -307,27 +307,32 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
 
             {/* ═══ FOOTER ═══ */}
             <div className="px-5 py-4 border-t border-white/5 bg-black/30">
-              <div className="flex items-center justify-between">
-                {/* PIN display */}
-                <div className="flex items-center gap-2">
-                  <span className="text-[8px] font-black text-white/15 uppercase tracking-widest">
+              <div className="flex items-center justify-between gap-3">
+                {/* PIN display — يلتف على سطرين بدل دفع زر المغادرة خارج البطاقة */}
+                <div className="flex flex-col gap-1 min-w-0 flex-1">
+                  <span className="text-[8px] font-black text-white/25 uppercase tracking-widest">
                     {isRTL ? 'رمز المنافسة:' : 'Code:'}
                   </span>
-                  <span className="text-[10px] font-mono font-black text-amber-500/50 tracking-[0.2em] select-all">
+                  <span
+                    dir="ltr"
+                    className="text-[10px] font-mono font-black text-amber-500/60 tracking-[0.08em] select-all leading-snug"
+                    style={{ wordBreak: 'break-all', textAlign: isRTL ? 'right' : 'left' }}
+                  >
                     {challenge.inviteToken || challenge.pin}
                   </span>
                 </div>
 
-                {/* Leave button */}
+                {/* Leave button — حجم ثابت لا يُضغط ولا يُقصّ */}
                 <button
                   onClick={handleLeave}
                   disabled={isLeaving}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600/8 border border-red-600/15 text-red-400/80 hover:bg-red-600/20 hover:text-red-400 transition-all active:scale-95"
+                  aria-label={isRTL ? 'مغادرة المنافسة' : 'Leave challenge'}
+                  className="shrink-0 whitespace-nowrap flex items-center gap-2 px-4 h-10 rounded-xl bg-red-600/10 border border-red-600/25 text-red-400 hover:bg-red-600/20 transition-all active:scale-95 disabled:opacity-60"
                 >
                   {isLeaving ? (
-                    <Loader2 size={12} className="animate-spin" />
+                    <Loader2 size={13} className="animate-spin" />
                   ) : (
-                    <LogOut size={12} />
+                    <LogOut size={13} className={isRTL ? 'rotate-180' : ''} />
                   )}
                   <span className="text-[10px] font-black uppercase tracking-wider">
                     {isRTL ? 'مغادرة' : 'Leave'}
