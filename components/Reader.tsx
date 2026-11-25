@@ -182,6 +182,12 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
   const totalPagesRef = useRef(totalPages);
   currentPageRef.current = currentPage;
   totalPagesRef.current = totalPages;
+  // دقائق لوحة الصدارة = المجموع التراكمي لنفس الكتاب: ما سُجّل قبل فتح القارئ + جلسة القراءة الحالية
+  const baseSecondsRef = useRef<number>((() => {
+    try { return storageService.getBooks().find(b => b.id === book.id)?.timeSpentSeconds ?? book.timeSpentSeconds ?? 0; }
+    catch { return book.timeSpentSeconds || 0; }
+  })());
+  const getTotalMinutes = (sessionSecs: number) => Math.floor((baseSecondsRef.current + (sessionSecs || 0)) / 60);
   const getLiveStars = () => {
     try { return storageService.getBooks().find(b => b.id === book.id)?.stars || book.stars || 0; } catch { return book.stars || 0; }
   };
@@ -219,7 +225,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                   book.id,
                   currentPageRef.current,
                   totalPagesRef.current,
-                  Math.floor(next / 60),
+                  getTotalMinutes(next),
                   getLiveStars()
                 );
               }
@@ -574,7 +580,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
     if (!isChallengeOpen) return;
     challengeService.syncProgress(
       book.id, currentPageRef.current, totalPagesRef.current,
-      Math.floor(sessionSecondsRef.current / 60), getLiveStars()
+      getTotalMinutes(sessionSecondsRef.current), getLiveStars()
     );
   }, [isChallengeOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   // Removed periodic 60s auto-save to prevent double counting and ensure 
@@ -602,7 +608,7 @@ const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpda
                     book.id,
                     currentPageRef.current,
                     totalPagesRef.current,
-                    Math.floor(sessionSecondsRef.current / 60),
+                    getTotalMinutes(sessionSecondsRef.current),
                     getLiveStars()
                   );
                 }
