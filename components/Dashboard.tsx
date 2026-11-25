@@ -5,6 +5,7 @@ import type { Book, ShelfData } from '../types';
 import { translations } from '../i18n/translations';
 import { storageService } from '../services/storageService';
 import { badgeStore } from '../services/badgeStore';
+import ChallengeAnalytics from './ChallengeAnalytics';
 import { deepSessionService } from '../services/deepSessionService';
 import type { DeepSession, DeepSessionStats } from '../types';
 import { 
@@ -899,6 +900,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
         </div>
       </section>
 
+      {/* ══════════ COMPETITION ANALYTICS ══════════ */}
+      <ChallengeAnalytics lang={lang} />
+
       {/* ══════════ DEEP READING LOG SECTION ══════════ */}
       {(() => {
         const _dsVer = dsSessionsVersion; // trigger re-read on delete
@@ -1228,45 +1232,4 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
                             <button
                               onClick={() => isConfirmed && handleDeleteDeepSession(dsDeleteConfirmId)}
                               disabled={!isConfirmed}
-                              className={`flex-1 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all active:scale-95 ${
-                                isConfirmed
-                                  ? 'bg-red-600 text-white hover:bg-red-500 cursor-pointer'
-                                  : 'bg-red-600/20 text-red-500/30 cursor-not-allowed'
-                              }`}
-                            >
-                              {(t as any).deepSessionDelete}
-                            </button>
-                          </div>
-                        </MotionDiv>
-                      </MotionDiv>
-                    );
-                  })()}
-                </AnimatePresence>
-
-              </div>
-            )}
-          </section>
-        );
-      })()}
-
-      {/* Wipe Confirmation Overlay */}
-      <AnimatePresence>
-        {showClearConfirm && (
-          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/98 backdrop-blur-[100px] flex items-center justify-center p-4 md:p-6 text-center">
-            <MotionDiv initial={{ scale: 0.9, y: 50 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b] border border-white/10 p-8 md:p-16 rounded-[2rem] md:rounded-[5rem] w-full max-w-lg shadow-[0_0_150px_rgba(255,0,0,0.2)]">
-               <div className="w-12 h-12 md:w-24 md:h-24 bg-red-600/10 rounded-full flex items-center justify-center text-red-600 mx-auto mb-6 md:mb-10 border border-red-600/20"><AlertTriangle className="size-6 md:size-12" /></div>
-               <h3 className="text-lg md:text-3xl font-black uppercase italic mb-4 md:mb-8 tracking-tighter">{isRTL ? 'تأكيد المسح الشامل' : 'TOTAL ARCHIVE WIPE'}</h3>
-               <p className="text-[8px] md:text-sm text-white/40 font-bold uppercase tracking-[0.15em] md:tracking-[0.2em] mb-8 md:mb-16 leading-relaxed">
-                 {isRTL ? 'سيتم مسح جميع المخطوطات والتقدم والنجوم نهائياً من المحراب. لا يمكن التراجع عن هذا الفعل.' : 'Permanent erasure of all neural records and manuscripts. This action is irreversible.'}
-               </p>
-               <div className="flex flex-col gap-3 md:gap-5">
-                 <button onClick={handleClearAll} className="w-full bg-red-600 py-3 md:py-6 rounded-[1rem] md:rounded-[2.5rem] font-black text-[9px] md:text-xs uppercase text-white tracking-[0.2em] md:tracking-[0.4em] shadow-2xl hover:bg-red-500 transition-all">{isRTL ? 'نعم، امسح كل شيء' : 'YES, PURGE ARCHIVE'}</button>
-                 <button onClick={() => setShowClearConfirm(false)} className="w-full bg-white/5 py-3 md:py-6 rounded-[1rem] md:rounded-[2.5rem] font-black text-[9px] md:text-xs uppercase text-white/30 tracking-[0.2em] md:tracking-[0.4em] hover:bg-white/10 transition-all">{isRTL ? 'إلغاء' : 'CANCEL'}</button>
-               </div>
-            </MotionDiv>
-          </MotionDiv>
-        )}
-      </AnimatePresence>
-    </MotionDiv>
-  );
-};
+                              className={`flex-1 py-3 rounded-xl font-black text-[
