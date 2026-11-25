@@ -154,12 +154,13 @@ const _buildZipStreaming = async (
       author: book.author,
       cover: cover || '',
       annotations: book.annotations || [],
-      stars: book.stars || 0,
-      lastPage: book.lastPage || 0,
+      // الإنجاز الشخصي لا يُصدَّر: الكتاب + الملاحظات والتسطير والتأطير والمعلومات فقط
+      stars: 0,
+      lastPage: 0,
       addedAt: book.addedAt || Date.now(),
-      timeSpentSeconds: book.timeSpentSeconds || 0,
-      dailyTimeSeconds: book.dailyTimeSeconds || 0,
-      lastReadDate: book.lastReadDate || '',
+      timeSpentSeconds: 0,
+      dailyTimeSeconds: 0,
+      lastReadDate: '',
     });
     if (i % 3 === 2) {
       await _yield();
@@ -217,11 +218,12 @@ const _buildSingleBookZip = async (
       author: book.author,
       cover: cover || '',
       annotations: book.annotations || [],
-      stars: book.stars || 0,
-      lastPage: book.lastPage || 0,
-      timeSpentSeconds: book.timeSpentSeconds || 0,
-      dailyTimeSeconds: book.dailyTimeSeconds || 0,
-      lastReadAt: book.lastReadAt || Date.now(),
+      // الإنجاز الشخصي لا يُصدَّر: الكتاب + الملاحظات والتسطير والتأطير والمعلومات فقط
+      stars: 0,
+      lastPage: 0,
+      timeSpentSeconds: 0,
+      dailyTimeSeconds: 0,
+      lastReadAt: Date.now(),
       addedAt: book.addedAt || Date.now(),
     }],
   };
@@ -321,12 +323,12 @@ const _importFromZip = async (file: File): Promise<{ shelf: ShelfData; books: Bo
       id: newId, shelfId,
       title: bd.title, author: bd.author,
       cover: bd.cover || '', content: '[VISUAL_PDF_MODE]',
-      timeSpentSeconds: bd.timeSpentSeconds || 0,
-      dailyTimeSeconds: bd.dailyTimeSeconds || 0,
-      lastReadDate: bd.lastReadDate || '',
-      stars: bd.stars || 0,
+      timeSpentSeconds: 0, // الإنجاز يبدأ من الصفر عند المستلم
+      dailyTimeSeconds: 0,
+      lastReadDate: '',
+      stars: 0,
       addedAt: bd.addedAt || Date.now(),
-      lastPage: bd.lastPage || 0,
+      lastPage: 0,
       annotations: bd.annotations || [],
     });
     await _yield();
@@ -377,11 +379,11 @@ const _importSingleBookFromZip = async (
     author: bookData.author,
     cover,
     content: '[VISUAL_PDF_MODE]',
-    timeSpentSeconds: bookData.timeSpentSeconds || 0,
+    timeSpentSeconds: 0, // الإنجاز يبدأ من الصفر عند المستلم
     dailyTimeSeconds: 0,
-    stars: bookData.stars || 0,
+    stars: 0,
     addedAt: bookData.addedAt || Date.now(),
-    lastPage: bookData.lastPage || 0,
+    lastPage: 0,
     annotations: bookData.annotations || [],
   };
 };
@@ -418,11 +420,11 @@ const _importLegacySbook = async (
     author: meta.author,
     cover: meta.cover || '',
     content: '[VISUAL_PDF_MODE]',
-    timeSpentSeconds: meta.timeSpentSeconds || 0,
+    timeSpentSeconds: 0, // الإنجاز يبدأ من الصفر عند المستلم
     dailyTimeSeconds: 0,
-    stars: meta.stars || 0,
+    stars: 0,
     addedAt: meta.addedAt || Date.now(),
-    lastPage: meta.lastPage || 0,
+    lastPage: 0,
     annotations: meta.annotations || [],
   };
 };
@@ -449,12 +451,12 @@ const _importFromJson = async (
       id: newId, shelfId,
       title: bd.title, author: bd.author,
       cover: bd.cover || '', content: '[VISUAL_PDF_MODE]',
-      timeSpentSeconds: bd.timeSpentSeconds || 0,
-      dailyTimeSeconds: bd.dailyTimeSeconds || 0,
-      lastReadDate: bd.lastReadDate || '',
-      stars: bd.stars || 0,
+      timeSpentSeconds: 0, // الإنجاز يبدأ من الصفر عند المستلم
+      dailyTimeSeconds: 0,
+      lastReadDate: '',
+      stars: 0,
       addedAt: bd.addedAt || Date.now(),
-      lastPage: bd.lastPage || 0,
+      lastPage: 0,
       annotations: bd.annotations || [],
     });
     await _yield();
