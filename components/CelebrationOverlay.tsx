@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Star, Sparkles, Trophy } from 'lucide-react';
 import { Language } from '../types';
@@ -41,6 +41,15 @@ export const CelebrationOverlay: React.FC<CelebrationOverlayProps> = ({ starCoun
   const t = translations[lang];
   const quote = DEEP_QUOTES[lang][(starCount - 1) % DEEP_QUOTES[lang].length];
 
+  // جسيمات ثابتة: تُولَّد مرة واحدة فقط (كانت Math.random داخل الرسم فتُعاد عشوائيتها
+  // وتُعاد حركتها عند كل إعادة رسم للتطبيق، فيبدو اللوح مهتزاً)
+  const particles = useMemo(() => Array.from({ length: 14 }, () => ({
+    x: Math.round(Math.random() * 96),
+    size: Math.round(Math.random() * 22 + 16),
+    duration: Math.random() * 6 + 7,
+    delay: Math.random() * 5,
+  })), []);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (audio) {
@@ -60,59 +69,48 @@ export const CelebrationOverlay: React.FC<CelebrationOverlayProps> = ({ starCoun
         audio.currentTime = 0;
       }
     };
-  }, [onComplete]);
+  }, [onComplete, starCount]);
 
   return (
     <MotionDiv
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-2xl overflow-hidden perspective-[2000px]"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 overflow-hidden"
+      style={{ isolation: 'isolate', transform: 'translateZ(0)' }}
     >
       <audio ref={audioRef} src="/assets/sounds/celebration.mp3" />
         
-        {/* Dynamic 3D Background Particles */}
-        <div className="absolute inset-0 pointer-events-none">
-          {[...Array(40)].map((_, i) => (
+        {/* Background particles (stable, 2D, GPU-only transforms) */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {particles.map((pt, i) => (
             <MotionDiv
               key={i}
-              initial={{ 
-                x: Math.random() * 100 + '%', 
-                y: '110%',
-                z: Math.random() * -1000,
-                opacity: 0 
-              }}
-              animate={{ 
-                y: '-10%',
-                opacity: [0, 1, 1, 0],
-                rotateX: Math.random() * 360,
-                rotateY: Math.random() * 360
-              }}
-              transition={{ 
-                duration: Math.random() * 6 + 4, 
-                repeat: Infinity, 
-                delay: Math.random() * 5 
-              }}
+              initial={{ y: '110vh', opacity: 0 }}
+              animate={{ y: '-15vh', opacity: [0, 0.9, 0.9, 0] }}
+              transition={{ duration: pt.duration, repeat: Infinity, delay: pt.delay, ease: 'linear' }}
               className="absolute text-red-500/40"
+              style={{ left: `${pt.x}%`, top: 0, willChange: 'transform, opacity' }}
             >
-              <Sparkles size={Math.random() * 40 + 20} />
+              <Sparkles size={pt.size} />
             </MotionDiv>
           ))}
         </div>
 
         {/* Main 3D Card */}
         <MotionDiv
-          initial={{ scale: 0.7, opacity: 0, rotateX: 30, y: 50 }}
-          animate={{ scale: 1, opacity: 1, rotateX: 0, y: 0 }}
-          exit={{ scale: 1.1, opacity: 0, rotateX: -30, y: -50 }}
-          transition={{ type: "spring", damping: 20, stiffness: 100 }}
-          className="relative z-10 flex flex-col items-center text-center p-10 md:p-16 w-[90vw] max-w-xl bg-black/40 backdrop-blur-3xl border border-white/10 rounded-[3rem] md:rounded-[5rem] shadow-[0_0_100px_rgba(255,0,0,0.2)]"
+          key={starCount}
+          initial={{ scale: 0.85, opacity: 0, y: 30 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 1.05, opacity: 0, y: -30 }}
+          transition={{ type: "spring", damping: 24, stiffness: 140 }}
+          className="relative z-10 flex flex-col items-center text-center p-10 md:p-16 w-[90vw] max-w-xl bg-black border border-white/10 rounded-[3rem] md:rounded-[5rem] shadow-[0_0_60px_rgba(255,0,0,0.18)]"
+          style={{ willChange: 'transform, opacity' }}
         >
           {/* Floating 3D Trophy Container */}
           <MotionDiv
             animate={{ 
-              y: [0, -15, 0],
-              rotateY: [-10, 10, -10]
+              y: [0, -10, 0]
             }}
             transition={{ 
               duration: 5, 
@@ -121,7 +119,7 @@ export const CelebrationOverlay: React.FC<CelebrationOverlayProps> = ({ starCoun
             }}
             className="mb-10 relative"
           >
-            <div className="absolute inset-0 bg-red-600/30 blur-[80px] rounded-full animate-pulse" />
+            <div className="absolute -inset-10 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(220,38,38,0.35) 0%, rgba(220,38,38,0) 65%)' }} />
             <div className="relative bg-gradient-to-br from-red-600 via-red-900 to-black p-8 md:p-12 rounded-[3rem] shadow-[0_20px_50px_rgba(255,0,0,0.4)] border border-red-400/30">
               <Trophy size={80} className="text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]" />
               <MotionDiv 
@@ -190,7 +188,7 @@ export const CelebrationOverlay: React.FC<CelebrationOverlayProps> = ({ starCoun
                 className="h-full bg-red-600 shadow-[0_0_10px_#ff0000]"
               />
             </div>
-            <span className="text-[10px] font-black uppercase tracking-[0.4em] text-white/20 animate-pulse">
+            <span className="text-[10px] font-black uppercase tracking-[0.4em] text-white/25">
               {lang === 'ar' ? 'العودة إلى المحراب قريباً...' : 'Returning to sanctuary soon...'}
             </span>
           </MotionDiv>
@@ -198,29 +196,6 @@ export const CelebrationOverlay: React.FC<CelebrationOverlayProps> = ({ starCoun
 
 
 
-        {/* Immersive 3D Rings */}
-        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-          <MotionDiv
-            animate={{ 
-              rotate: 360, 
-              scale: [1, 1.2, 1],
-              rotateX: [0, 45, 0],
-              rotateY: [0, 45, 0]
-            }}
-            transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-            className="w-[800px] h-[800px] border border-white/[0.03] rounded-full absolute"
-          />
-          <MotionDiv
-            animate={{ 
-              rotate: -360, 
-              scale: [1, 1.3, 1],
-              rotateX: [45, 0, 45],
-              rotateY: [45, 0, 45]
-            }}
-            transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-            className="w-[1100px] h-[1100px] border border-white/[0.02] rounded-full absolute"
-          />
-        </div>
       </MotionDiv>
   );
 };
