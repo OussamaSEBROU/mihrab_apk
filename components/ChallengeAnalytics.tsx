@@ -223,7 +223,7 @@ const ChallengeAnalytics: React.FC<Props> = ({ lang }) => {
   const tile = 'rounded-2xl bg-black/30 border border-white/5 px-3 py-3 md:px-5 md:py-4';
 
   return (
-    <section dir={isRTL ? 'rtl' : 'ltr'} className="bg-white/[0.01] border border-white/5 p-4 md:p-12 rounded-[1.5rem] md:rounded-[3.5rem] space-y-6 md:space-y-10 relative overflow-hidden shadow-3xl">
+    <section id="dash-competition" style={{ scrollMarginTop: 190 }} dir={isRTL ? 'rtl' : 'ltr'} className="bg-white/[0.01] border border-white/5 p-4 md:p-12 rounded-[1.5rem] md:rounded-[3.5rem] space-y-6 md:space-y-10 relative overflow-hidden shadow-3xl">
       {/* ── Header ── */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 md:gap-5 min-w-0">
