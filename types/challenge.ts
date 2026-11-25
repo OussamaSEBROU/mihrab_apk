@@ -7,6 +7,15 @@ export interface ChallengeIdentity {
   country: string;
 }
 
+// نقطة في السجل الزمني لمتنافس (لرسم المنحنيات والتحليل الإحصائي)
+export interface ChallengePoint {
+  t: number;   // الوقت (ms)
+  m: number;   // الدقائق
+  p: number;   // نسبة الإنجاز %
+  s: number;   // النجوم
+  sc: number;  // النقاط (دقائق + إنجاز)
+}
+
 export interface ChallengeParticipant {
   userId: string;
   name: string;
@@ -19,6 +28,8 @@ export interface ChallengeParticipant {
   lastUpdated: number;
   // Computed score: combines reading time + progress
   score: number;
+  // سجل التقدّم عبر الزمن (اختياري — متوافق مع البيانات القديمة)
+  history?: ChallengePoint[];
 }
 
 export interface BookChallenge {
