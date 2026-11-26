@@ -45,6 +45,24 @@ export interface BookChallenge {
   isOwner: boolean;
   inviteToken?: string;          // Full invite token for API
   lastSyncedAt: number;
+  // ── منافسة داخل نادي (اختياري — المنافسات القديمة المستقلة لا تحمل هذه الحقول) ──
+  clubId?: string;               // معرّف النادي (= id)
+  clubName?: string;
+  bookKey?: string;              // مفتاح الكتاب داخل النادي (من العنوان)
+}
+
+// كتاب مسجَّل للمنافسة داخل نادي
+export interface ClubBookEntry {
+  key: string;
+  title: string;
+  author: string;
+}
+
+// لقطة سجل كتب النادي (تُرسل كرسالة نظام داخل مجموعة النادي)
+export interface ClubBooksSnapshotMessage {
+  _isClubBooks: true;
+  books: ClubBookEntry[];
+  timestamp: number;
 }
 
 export interface ChallengeProgress {
@@ -67,4 +85,5 @@ export interface ChallengeProgressMessage {
   readingMinutes: number;
   stars: number;
   timestamp: number;
+  bookKey?: string;   // يُضاف فقط للمنافسات داخل الأندية
 }
