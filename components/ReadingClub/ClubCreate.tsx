@@ -3,6 +3,7 @@ import { ArrowLeft, Save, Globe, Lock, User, Loader2, AlertCircle } from 'lucide
 import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 import { clubGroupsAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
+import { challengeService } from '../../services/challengeService';
 
 interface ClubCreateProps {
   lang: 'ar' | 'en';
@@ -18,7 +19,12 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [privacy, setPrivacy] = useState<'private' | 'public' | 'personal'>('private');
-  const [bookId, setBookId] = useState('');
+  // عدة كتب للنادي: الأول هو «الكتاب الحالي» والبقية تُضاف لمنافسات النادي
+  const [bookIds, setBookIds] = useState<string[]>([]);
+  const bookId = bookIds[0] || '';
+  const toggleBook = (id: string) =>
+    setBookIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  const findBook = (id: string) => books.find((b: any) => b.id === id || b._id === id);
   const [joinApprovalRequired, setJoinApprovalRequired] = useState(true);
   const [maxMembers, setMaxMembers] = useState(70);
   
@@ -71,6 +77,14 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
       });
       
       if (response.ok && response.data) {
+        // تسجيل كل الكتب المختارة ضمن منافسات النادي
+        const groupId = (response.data.group as any)?._id;
+        if (groupId && bookIds.length) {
+          for (const id of bookIds) {
+            const b = findBook(id);
+            if (b?.title) { try { await challengeService.addClubBook(groupId, b.title, b.author || ''); } catch {} }
+          }
+        }
         onCreated(response.data.group as any);
       } else {
         setError(response.error || 'Failed to create club');
@@ -182,18 +196,34 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
             <label className="block text-xs font-black uppercase tracking-widest text-gray-500 mb-2">
               {lang === 'ar' ? 'الكتاب الحالي (اختياري)' : 'CURRENT BOOK (OPTIONAL)'}
             </label>
-            <select
-              value={bookId}
-              onChange={(e) => setBookId(e.target.value)}
-              className="w-full bg-black/50 border border-white/10 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 appearance-none"
-            >
-              <option value="">{lang === 'ar' ? '-- بدون كتاب الآن --' : '-- No book for now --'}</option>
-              {books.map(book => (
-                <option key={book.id || book._id} value={book.id || book._id}>
-                  {book.title}
-                </option>
-              ))}
-            </select>
+            <div className="max-h-56 overflow-y-auto rounded-lg border border-white/10 bg-black/40 divide-y divide-white/5">
+              {books.length === 0 && (
+                <p className="p-4 text-xs font-bold text-white/30 text-center">{lang === 'ar' ? 'لا توجد كتب في مكتبتك' : 'No books in your library'}</p>
+              )}
+              {books.map(book => {
+                const id = book.id || book._id;
+                const idx = bookIds.indexOf(id);
+                const on = idx !== -1;
+                return (
+                  <button
+                    type="button"
+                    key={id}
+                    onClick={() => toggleBook(id)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-start transition-colors ${on ? 'bg-red-600/10' : 'active:bg-white/5'}`}
+                  >
+                    <span className={`w-5 h-5 rounded-md border flex items-center justify-center text-[10px] font-black shrink-0 ${on ? 'bg-red-600 border-red-600 text-white' : 'border-white/20 text-transparent'}`}>
+                      {on ? idx + 1 : '·'}
+                    </span>
+                    <span className="min-w-0 flex-1 text-sm font-bold text-white truncate">{book.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[10px] font-bold text-white/30 leading-relaxed">
+              {lang === 'ar'
+                ? 'يمكنك اختيار أكثر من كتاب: الأول هو الكتاب الحالي والبقية كتب منافسة، ويمكن إضافة المزيد لاحقاً.'
+                : 'Pick several books: the first is the current book, the rest become challenge books. You can add more later.'}
+            </p>
           </div>
 
           <div className="space-y-4 pt-4 border-t border-white/10">
