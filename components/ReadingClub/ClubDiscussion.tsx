@@ -9,7 +9,7 @@ import {
   ReadingClub, ClubUserProfile, ClubPost,
   getPostAuthorNickname, getPostAuthorAvatar, getPostAuthorId
 } from '../../types/readingClub';
-import { clubMessagesAPI } from '../../services/readingClubAPI';
+import { clubMessagesAPI, clubFilesAPI } from '../../services/readingClubAPI';
 import { readingClubSync } from '../../services/readingClubSync';
 import SpoilerGuard from './shared/SpoilerGuard';
 import ConfirmDialog from './shared/ConfirmDialog';
@@ -18,7 +18,7 @@ const MotionDiv = motion.div as any;
 
 const AVATARS = ['📖','🌙','⭐','🔥','🌿','💎','🦋','🌸','🏔️','🌊','🎭','🕌'];
 const QUICK_EMOJIS = ['❤️', '👍', '🔥', '💡', '👏'];
-const MAX_FILE_SIZE = 500 * 1024; // 500KB after compression
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB — أي نوع ملف
 
 // ═══════════════════════════════════════════════════
 // ATTACHMENT HELPERS
@@ -27,7 +27,39 @@ interface AttachmentData {
   _isAttachment: true;
   mimeType: string;
   fileName: string;
-  dataUrl: string;
+  /** رابط الملف بعد الرفع (الرسائل الجديدة) */
+  url?: string;
+  size?: number;
+  /** رسائل قديمة فقط، أو معاينة محلية قبل الإرسال */
+  dataUrl?: string;
+}
+
+const formatBytes = (n?: number) => {
+  if (!n) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+};
+
+/** تصغير الصور الكبيرة قبل الرفع (يبقى الأصل إن كان صغيراً أو غير صورة قابلة للتصغير) */
+async function shrinkImageIfBig(file: File): Promise<File> {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.size < 2 * 1024 * 1024) return file;
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const i = new window.Image(); i.onload = () => res(i); i.onerror = rej; i.src = url;
+    });
+    const maxW = 2000;
+    let w = img.width, h = img.height;
+    if (w > maxW) { h = (h * maxW) / w; w = maxW; }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(url);
+    const blob: Blob | null = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch { return file; }
 }
 
 function tryParseAttachment(body: string): AttachmentData | null {
@@ -146,18 +178,24 @@ const MessageBubble = React.memo<BubbleProps>(({
         {/* Body / Attachment */}
         {attachment ? (
           <div className="my-1">
-            {attachment.mimeType.startsWith('image/') ? (
-              <img src={attachment.dataUrl} alt={attachment.fileName} className="max-w-full rounded-lg max-h-[300px] object-contain" loading="lazy" />
-            ) : attachment.mimeType.startsWith('video/') ? (
-              <video src={attachment.dataUrl} controls className="max-w-full rounded-lg max-h-[300px]" />
+            {attachment.mimeType.startsWith('image/') && (attachment.url || attachment.dataUrl) ? (
+              <img src={attachment.url || attachment.dataUrl} alt={attachment.fileName} className="max-w-full rounded-lg max-h-[300px] object-contain" loading="lazy" />
+            ) : attachment.mimeType.startsWith('video/') && (attachment.url || attachment.dataUrl) ? (
+              <video src={attachment.url || attachment.dataUrl} controls preload="metadata" className="max-w-full rounded-lg max-h-[300px]" />
             ) : (
-              <div className="flex items-center gap-2 bg-black/30 p-3 rounded-lg">
+              <a
+                href={attachment.url || attachment.dataUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                download={attachment.fileName}
+                className="flex items-center gap-2 bg-black/30 p-3 rounded-lg"
+              >
                 <FileText size={24} className="text-red-500 shrink-0" />
                 <div className="min-w-0">
                   <p className="text-sm font-bold truncate">{attachment.fileName}</p>
-                  <p className="text-[10px] text-gray-500">{attachment.mimeType}</p>
+                  <p className="text-[10px] text-gray-500">{formatBytes(attachment.size) || attachment.mimeType}</p>
                 </div>
-              </div>
+              </a>
             )}
           </div>
         ) : msg.spoilerLevel > 0 ? (
@@ -262,6 +300,8 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
   // Attachment
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentData | null>(null);
   const [attachLoading, setAttachLoading] = useState(false);
+  const pendingFileRef = useRef<File | null>(null);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
 
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -400,24 +440,44 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
   }, [club._id]);
 
   const handleSend = useCallback(async () => {
-    // Attachment mode
+    // Attachment mode — رفع الملف ثم إرسال رابطه في رسالة صغيرة
     if (attachmentPreview) {
+      const file = pendingFileRef.current;
+      if (!file) { setAttachmentPreview(null); return; }
       setSending(true);
+      setSendError(null);
+      setUploadPct(0);
       try {
-        const attachBody = JSON.stringify(attachmentPreview);
-        if (attachBody.length > 5000) {
-          setSendError(isRTL ? 'الملف كبير جداً للإرسال عبر المحادثة' : 'File too large to send via chat');
-          setSending(false); setAttachmentPreview(null);
-          return;
+        const up = await clubFilesAPI.upload(club._id, file, setUploadPct);
+        if (!up.ok || !up.url) {
+          setSendError(
+            up.error === 'NOT_SUPPORTED'
+              ? (isRTL ? 'الخادم لا يدعم رفع الملفات بعد — يلزم تفعيل مسار الرفع في الخادم' : 'Server does not support file uploads yet')
+              : up.error === 'FILE_TOO_LARGE'
+              ? (isRTL ? 'الملف أكبر من 100MB' : 'File exceeds 100MB')
+              : (isRTL ? `تعذّر رفع الملف (${up.error || 'خطأ'}) — يمكنك إعادة المحاولة` : `Upload failed (${up.error || 'error'}) — you can retry`)
+          );
+          return;   // نُبقي المعاينة لإعادة المحاولة
         }
+        const attachBody = JSON.stringify({
+          _isAttachment: true,
+          mimeType: file.type || 'application/octet-stream',
+          fileName: file.name,
+          size: file.size,
+          url: up.url,
+        });
         const res = await clubMessagesAPI.send(club._id, {
           body: attachBody, type: 'thought',
           replyToMessageId: replyTo?._id,
           clientOperationId: crypto.randomUUID(),
         });
-        if (!res.ok) { setSendError(res.error || 'Failed'); }
-      } catch { setSendError('Network error'); }
-      finally { setSending(false); setAttachmentPreview(null); setReplyTo(null); }
+        if (!res.ok) { setSendError(res.error || 'Failed'); return; }
+        if (attachmentPreview.dataUrl?.startsWith('blob:')) URL.revokeObjectURL(attachmentPreview.dataUrl);
+        pendingFileRef.current = null;
+        setAttachmentPreview(null);
+        setReplyTo(null);
+      } catch { setSendError(isRTL ? 'خطأ في الشبكة' : 'Network error'); }
+      finally { setSending(false); setUploadPct(null); }
       return;
     }
 
@@ -541,25 +601,23 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
     if (!file) return;
     e.target.value = '';
 
+    if (file.size > MAX_FILE_SIZE) {
+      showToast(isRTL ? 'الملف أكبر من 100MB' : 'File exceeds 100MB');
+      return;
+    }
     setAttachLoading(true);
     try {
-      let dataUrl: string;
-      if (file.type.startsWith('image/')) {
-        dataUrl = await compressImage(file, 800, 0.7);
-      } else {
-        if (file.size > MAX_FILE_SIZE) {
-          showToast(isRTL ? `الملف كبير جداً (أقصى ${MAX_FILE_SIZE / 1024}KB)` : `File too large (max ${MAX_FILE_SIZE / 1024}KB)`);
-          setAttachLoading(false);
-          return;
-        }
-        dataUrl = await readFileAsDataUrl(file);
-      }
-
+      const prepared = await shrinkImageIfBig(file);
+      pendingFileRef.current = prepared;
+      // معاينة محلية خفيفة (رابط مؤقت — لا نقرأ الملف كاملاً في الذاكرة)
+      const previewUrl = prepared.type.startsWith('image/') ? URL.createObjectURL(prepared) : undefined;
+      setSendError(null);
       setAttachmentPreview({
         _isAttachment: true,
-        mimeType: file.type || 'application/octet-stream',
-        fileName: file.name,
-        dataUrl,
+        mimeType: prepared.type || 'application/octet-stream',
+        fileName: prepared.name,
+        size: prepared.size,
+        dataUrl: previewUrl,
       });
     } catch (err) {
       console.error('File read error:', err);
@@ -788,7 +846,7 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
         {attachmentPreview && (
           <div className="flex items-center gap-3 bg-gray-900/80 px-4 py-2 border-b border-red-900/20">
             <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-800 flex items-center justify-center shrink-0">
-              {attachmentPreview.mimeType.startsWith('image/') ? (
+              {attachmentPreview.mimeType.startsWith('image/') && attachmentPreview.dataUrl ? (
                 <img src={attachmentPreview.dataUrl} alt="" className="w-full h-full object-cover" />
               ) : (
                 <FileText size={20} className="text-red-500" />
@@ -796,20 +854,24 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
             </div>
             <div className="flex-1 min-w-0">
               <span className="text-[10px] font-black uppercase tracking-widest text-green-500">{isRTL ? 'مرفق' : 'ATTACHMENT'}</span>
-              <p className="text-xs text-gray-400 truncate">{attachmentPreview.fileName}</p>
+              <p className="text-xs text-gray-400 truncate">{attachmentPreview.fileName} {attachmentPreview.size ? `· ${formatBytes(attachmentPreview.size)}` : ''}</p>
+              {uploadPct !== null && (
+                <div className="mt-1.5 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                  <div className="h-full bg-red-600 transition-all" style={{ width: `${uploadPct}%` }} />
+                </div>
+              )}
             </div>
-            <button onClick={() => setAttachmentPreview(null)} className="text-gray-500 hover:text-white p-1 shrink-0"><X size={16} /></button>
+            <button
+              disabled={sending}
+              onClick={() => { if (attachmentPreview.dataUrl?.startsWith('blob:')) URL.revokeObjectURL(attachmentPreview.dataUrl); pendingFileRef.current = null; setAttachmentPreview(null); setSendError(null); }}
+              className="text-gray-500 hover:text-white p-1 shrink-0 disabled:opacity-30"
+            ><X size={16} /></button>
           </div>
         )}
 
         {/* Type Selector */}
         {!editingPost && !attachmentPreview && (
           <div className="flex items-center gap-2 px-3 pt-2">
-            {([{ t: 'thought', i: MessageCircle }, { t: 'question', i: HelpCircle }, { t: 'review', i: Star }, { t: 'quote', i: Quote }] as const).map(item => (
-              <button key={item.t} onClick={() => setType(item.t as any)} className={`p-1.5 rounded-full ${type === item.t ? 'bg-red-600 text-white' : 'text-gray-500'}`}>
-                <item.i size={16} />
-              </button>
-            ))}
             <div className="flex-1" />
             <button onClick={() => setSpoilerLevel(prev => (prev === 0 ? 1 : 0) as any)} className={`p-1.5 rounded-full ${spoilerLevel > 0 ? 'bg-yellow-600 text-white' : 'text-gray-500'}`}>
               <EyeOff size={16} />
@@ -825,7 +887,7 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
                 className="text-gray-500 hover:text-red-500 p-2 rounded-full transition-colors shrink-0 disabled:opacity-50">
                 {attachLoading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
               </button>
-              <input ref={fileInputRef} type="file" className="hidden" accept="image/*,video/*,.pdf,.zip,.rar" onChange={handleFileSelect} />
+              <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect} />
             </>
           )}
           {!attachmentPreview && (
