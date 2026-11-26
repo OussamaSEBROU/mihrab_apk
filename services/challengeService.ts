@@ -225,6 +225,7 @@ async function getAdminIds(clubId: string): Promise<Set<string> | null> {
   return ids;
 }
 
+const _codeSynced = new Set<string>();
 const authorOf = (msg: any): string => (msg?.authorId && typeof msg.authorId === 'object' ? msg.authorId._id : msg?.authorId) || '';
 
 async function postBooksSnapshot(clubId: string, books: ClubBookEntry[]) {
@@ -493,6 +494,13 @@ export const challengeService = {
       // Since we can't reverse the PIN, the user needs the full invite token
       // OR we search through our known challenges
 
+      // يقبل الرمز وحده أو رابط الدعوة كاملاً
+      const parsed = clubInviteCode.parse(pin);
+      if (!parsed) {
+        return { success: false, error: 'رمز المنافسة غير صالح — الصق الرمز كاملاً أو رابط الدعوة' };
+      }
+      pin = parsed;
+
       // First check if we already have this PIN locally (from sharing)
       const localChallenge = getChallenges().find(c => c.pin === pin);
       let inviteToken = localChallenge?.inviteToken || '';
@@ -752,6 +760,9 @@ export const challengeService = {
       }));
       const participants = sortParticipants(withHistory);
 
+      // توحيد رمز المنافسة مع رمز النادي (غير حاجب)
+      challengeService.syncCanonicalCode(bookId);
+
       // Update local cache
       const challenges = getChallenges();
       const idx = challenges.findIndex(c => c.bookId === bookId);
@@ -820,6 +831,34 @@ export const challengeService = {
         .filter(c => c.status !== 'deleted' && c.status !== 'archived' && c.privacy !== 'personal' && !isChallengeGroup(c))
         .map(c => ({ club: c, canManage: ADMIN_ROLES.includes(c.myRole || '') || c.ownerId === me }));
     } catch { return []; }
+  },
+
+  /** يوحّد رمز المنافسة مع رمز دعوة النادي نفسه (مرة لكل نادٍ في الجلسة) */
+  syncCanonicalCode: async (bookId: string): Promise<void> => {
+    const challenge = getChallenges().find(c => c.bookId === bookId);
+    if (!challenge || _codeSynced.has(challenge.id)) return;
+    _codeSynced.add(challenge.id);
+    try {
+      const res: any = await clubGroupsAPI.getGroup(challenge.id);
+      const code: string | undefined = res?.ok ? (res.data?.group?.inviteCode || res.data?.inviteCode) : undefined;
+      if (!code) return;
+      clubInviteCode.set(challenge.id, code);
+      const all = getChallenges();
+      let changed = false;
+      all.forEach(c => {
+        if (c.id === challenge.id && c.inviteToken !== code) { c.inviteToken = code; c.pin = generatePinFromToken(code); changed = true; }
+      });
+      if (changed) saveChallenges(all);
+    } catch {}
+  },
+
+  /** تنظيف الأثر المحلي لنادٍ حُذف */
+  forgetClub: (clubId: string): void => {
+    saveChallenges(getChallenges().filter(c => c.id !== clubId));
+    try {
+      localStorage.removeItem(`sanctuary_club_books_${clubId}`);
+      localStorage.removeItem(`sanctuary_club_invite_${clubId}`);
+    } catch {}
   },
 
   getClubBooks: async (clubId: string, club?: { currentBookTitle?: string; currentBookAuthor?: string } | null) =>
