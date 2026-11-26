@@ -86,4 +86,5 @@ export interface ChallengeProgressMessage {
   stars: number;
   timestamp: number;
   bookKey?: string;   // يُضاف فقط للمنافسات داخل الأندية
+  left?: boolean;     // انسحاب صاحب الرسالة من منافسة هذا الكتاب
 }
