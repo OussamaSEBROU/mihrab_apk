@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Users, BookOpen, RefreshCw, Lock, Globe, User, UserPlus, Link2, Loader2, X, AlertCircle } from 'lucide-react';
+import { Plus, Users, BookOpen, RefreshCw, Lock, Globe, User, UserPlus, Link2, Loader2, X, AlertCircle, Pencil, Trash2 } from 'lucide-react';
+import ConfirmDialog from './shared/ConfirmDialog';
 import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 
 const MotionDiv = motion.div as any;
@@ -14,6 +15,9 @@ interface ClubListProps {
   onRefresh?: () => void;
   loading?: boolean;
   onJoinWithToken?: (token: string) => void;
+  /** تعديل/حذف النادي (للمالك) */
+  onEditClub?: (club: ReadingClub) => void;
+  onDeleteClub?: (club: ReadingClub) => Promise<boolean>;
 }
 
 export const ClubList: React.FC<ClubListProps> = ({ 
@@ -24,12 +28,17 @@ export const ClubList: React.FC<ClubListProps> = ({
   onSelectClub, 
   onRefresh,
   loading = false,
-  onJoinWithToken
+  onJoinWithToken,
+  onEditClub,
+  onDeleteClub
 }) => {
   const isRTL = lang === 'ar';
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [inviteInput, setInviteInput] = useState('');
   const [joinError, setJoinError] = useState('');
+  const [toDelete, setToDelete] = useState<ReadingClub | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const isOwnerOf = (c: ReadingClub) => c.myRole === 'owner' || c.ownerId === userProfile.id;
 
   const getPrivacyIcon = (privacy: string) => {
     switch (privacy) {
@@ -191,6 +200,20 @@ export const ClubList: React.FC<ClubListProps> = ({
                       {club.name}
                     </h3>
                     <div className="flex items-center gap-2">
+                      {isOwnerOf(club) && onEditClub && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onEditClub(club); }}
+                          aria-label={isRTL ? 'تعديل النادي' : 'Edit club'}
+                          className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-white/60 flex items-center justify-center active:bg-white/10"
+                        ><Pencil size={14} /></button>
+                      )}
+                      {isOwnerOf(club) && onDeleteClub && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setToDelete(club); }}
+                          aria-label={isRTL ? 'حذف النادي' : 'Delete club'}
+                          className="w-8 h-8 rounded-lg bg-red-600/10 border border-red-600/25 text-red-500 flex items-center justify-center active:bg-red-600 active:text-white"
+                        ><Trash2 size={14} /></button>
+                      )}
                       {getRoleBadge(club.myRole || 'member')}
                       <span className="text-gray-500" title={club.privacy}>
                         {getPrivacyIcon(club.privacy || 'private')}
@@ -222,6 +245,24 @@ export const ClubList: React.FC<ClubListProps> = ({
           </div>
         )}
       </div>
+
+      {toDelete && (
+        <ConfirmDialog
+          lang={lang}
+          kind="delete"
+          title={isRTL ? 'حذف النادي؟' : 'Delete Club?'}
+          operationLabel={isRTL ? `حذف "${toDelete.name}" نهائياً` : `Permanently delete "${toDelete.name}"`}
+          consequencesLabel={isRTL ? 'سيتم حذف جميع الرسائل والاقتباسات والمراحل' : 'All messages, quotes, and stages will be deleted'}
+          permanenceLabel={isRTL ? 'لا يمكن التراجع عن هذا الإجراء' : 'This cannot be undone'}
+          confirmPhrase={isRTL ? 'احذف' : 'delete'}
+          loading={deleting}
+          onCancel={() => setToDelete(null)}
+          onConfirm={async () => {
+            setDeleting(true);
+            try { if (onDeleteClub) await onDeleteClub(toDelete); } finally { setDeleting(false); setToDelete(null); }
+          }}
+        />
+      )}
 
       {/* ══════════════════════════════════════════════════ */}
       {/* Floating Action Buttons — Create + Join           */}
