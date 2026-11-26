@@ -327,7 +327,7 @@ export default function ClubSettings({ lang, club, userProfile, isOwner, books, 
           operationLabel={isRTL ? `حذف "${club.name}" نهائياً` : `Permanently delete "${club.name}"`}
           consequencesLabel={isRTL ? 'سيتم حذف جميع الرسائل والاقتباسات والمراحل' : 'All messages, quotes, and stages will be deleted'}
           permanenceLabel={isRTL ? 'لا يمكن التراجع عن هذا الإجراء' : 'This action cannot be undone'}
-          confirmPhrase={club.name}
+          confirmPhrase={isRTL ? 'احذف' : 'delete'}
           loading={deleting}
           onCancel={() => setShowDeleteConfirm(false)}
           onConfirm={handleDelete}
