@@ -225,6 +225,12 @@ interface Props {
   onBack: () => void;
 }
 
+// رسائل النظام (تقدّم المنافسات وسجل كتب النادي) لا تُعرض في النقاش
+const isSystemPost = (m: { body?: string; content?: string } | null | undefined): boolean => {
+  const b = (m?.body ?? m?.content ?? '') as string;
+  return b.charCodeAt(0) === 123 && (b.includes('"_isChallengeProgress"') || b.includes('"_isClubBooks"'));
+};
+
 export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdmin, onBack }: Props) {
   const isRTL = lang === 'ar';
   const currentUserId = userProfile.id || userProfile.serverUserId || '';
@@ -303,8 +309,8 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
   useEffect(() => {
     const fetch = async () => {
       try {
-        const res = await clubMessagesAPI.list(club._id);
-        if (res.ok && res.data?.messages) setMessages(res.data.messages.reverse());
+        const res = await clubMessagesAPI.list(club._id, undefined, 80);
+        if (res.ok && res.data?.messages) setMessages(res.data.messages.filter(m => !isSystemPost(m)).reverse());
       } catch (err) { console.error(err); }
       finally { setIsLoading(false); }
     };
@@ -312,6 +318,7 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
     readingClubSync.joinRoom(club._id);
 
     readingClubSync.onNewMessage((msg: ClubPost) => {
+      if (isSystemPost(msg)) return;
       setMessages(prev => {
         if (prev.some(m => m._id === msg._id)) return prev;
         return [...prev, msg];
