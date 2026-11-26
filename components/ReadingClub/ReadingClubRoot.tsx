@@ -225,7 +225,7 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken, onOp
           )}
           {view === 'discussion' && profile && selectedClub && (
             <MotionDiv key="discussion" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <ClubDiscussion lang={lang} club={selectedClub} userProfile={profile} isOwner={isOwner} isAdmin={isOwnerOrAdmin} onBack={() => setView('page')} />
+              <ClubDiscussion lang={lang} club={selectedClub} userProfile={profile} isOwner={isOwner} isAdmin={isOwnerOrAdmin || isOwner} onBack={() => setView('page')} />
             </MotionDiv>
           )}
           {view === 'quotes' && profile && selectedClub && (
