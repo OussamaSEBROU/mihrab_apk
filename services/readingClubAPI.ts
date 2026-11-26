@@ -10,6 +10,17 @@ import type {
 
 const api = readingClubAuth.apiCall;
 
+// شواهد حذف الأندية (محلية)
+const TOMB_KEY = 'sanctuary_deleted_clubs';
+export const clubTombstones = {
+  all(): Set<string> {
+    try { return new Set<string>(JSON.parse(localStorage.getItem(TOMB_KEY) || '[]')); } catch { return new Set<string>(); }
+  },
+  add(id: string) {
+    try { const s = clubTombstones.all(); s.add(id); localStorage.setItem(TOMB_KEY, JSON.stringify(Array.from(s).slice(-300))); } catch {}
+  },
+};
+
 // ══════════════════════════════════════════════════════════════
 // GROUPS
 // ══════════════════════════════════════════════════════════════
@@ -23,8 +34,15 @@ export const clubGroupsAPI = {
     method: 'POST', body: JSON.stringify(data)
   }),
 
-  getMyGroups: async () =>
-    api<ReadingClub[]>('/groups/mine', { method: 'GET' }),
+  getMyGroups: async () => {
+    const r = await api<ReadingClub[]>('/groups/mine', { method: 'GET' });
+    // لا نُظهر الأندية المحذوفة (حذف ناعم في الخادم قد يُعيدها في القائمة)
+    if (r.ok && Array.isArray(r.data)) {
+      const dead = clubTombstones.all();
+      r.data = r.data.filter(c => !dead.has(c._id) && (c as any).status !== 'deleted');
+    }
+    return r;
+  },
 
   getGroup: async (groupId: string) =>
     api<{ group: ReadingClub; memberCount: number }>(`/groups/${groupId}`, { method: 'GET' }),
@@ -34,8 +52,12 @@ export const clubGroupsAPI = {
       method: 'PUT', body: JSON.stringify(data)
     }),
 
-  deleteGroup: async (groupId: string) =>
-    api<{ success: boolean }>(`/groups/${groupId}`, { method: 'DELETE' }),
+  deleteGroup: async (groupId: string) => {
+    const r = await api<{ success: boolean }>(`/groups/${groupId}`, { method: 'DELETE' });
+    // نجاح، أو «غير موجود» أصلاً: النادي انتهى — نحفظ شاهد حذف محلياً حتى لا يعود بعد إعادة التشغيل
+    if (r.ok || /not found|404/i.test(r.error || '')) clubTombstones.add(groupId);
+    return r;
+  },
 
   getUpdates: async (groupId: string, since: number) =>
     api<{ group: ReadingClub | null; members: ClubMember[]; messages: ClubPost[]; quotes: ClubQuote[]; stages: ClubStage[] }>(
