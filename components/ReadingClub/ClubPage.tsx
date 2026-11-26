@@ -5,6 +5,7 @@ import { ReadingClub, ClubUserProfile, ClubView } from '../../types/readingClub'
 import { clubInvitesAPI, clubMembersAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
 import ClubBooksSection from './ClubBooksSection';
+import { titleMatches } from '../../services/challengeService';
 import { clubInviteCode } from '../../services/clubInviteCode';
 
 const MotionDiv = motion.div as any;
@@ -77,13 +78,15 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
     }
   };
 
+  const [bookMissing, setBookMissing] = useState(false);
   const handleOpenBook = () => {
-    if (club.currentBookId && books && onOpenReader) {
-      const book = books.find(b => (b.id === club.currentBookId || b._id === club.currentBookId));
-      if (book) {
-        onOpenReader(book);
-      }
-    }
+    if (!books || !onOpenReader) return;
+    // نطابق بالمعرّف ثم بالعنوان (معرّف الملف يختلف من جهاز لآخر)
+    const book =
+      books.find(b => club.currentBookId && (b.id === club.currentBookId || b._id === club.currentBookId)) ||
+      books.find(b => club.currentBookTitle && titleMatches(b.title, club.currentBookTitle));
+    if (book) { setBookMissing(false); onOpenReader(book); }
+    else { setBookMissing(true); setTimeout(() => setBookMissing(false), 3500); }
   };
 
   return (
@@ -141,7 +144,11 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
             transition={{ delay: 0.1 }}
             className="flex flex-col gap-2"
           >
-            <div className="bg-black/40 border border-white/10 rounded-xl p-4 flex items-center gap-4">
+            <div
+              onClick={handleOpenBook}
+              role={onOpenReader ? 'button' : undefined}
+              className={`bg-black/40 border border-white/10 rounded-xl p-4 flex items-center gap-4 ${onOpenReader ? 'cursor-pointer active:bg-white/5' : ''}`}
+            >
               <div className="w-12 h-16 bg-red-900/30 rounded flex items-center justify-center border border-red-500/20 shrink-0">
                 <BookOpen className="w-6 h-6 text-red-400" />
               </div>
@@ -154,15 +161,20 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
                   <p className="text-xs text-gray-500 mt-1">{club.currentBookAuthor}</p>
                 )}
               </div>
-              {club.currentBookId && books && onOpenReader && (
+              {books && onOpenReader && (
                 <button
-                  onClick={handleOpenBook}
+                  onClick={(e) => { e.stopPropagation(); handleOpenBook(); }}
                   className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase tracking-widest rounded-lg transition-colors"
                 >
                   {lang === 'ar' ? 'افتح' : 'Open'}
                 </button>
               )}
             </div>
+            {bookMissing && (
+              <div className="text-[11px] font-black text-amber-300 text-center">
+                {lang === 'ar' ? 'هذا الكتاب غير موجود في مكتبتك — أضفه أولاً من المحراب' : 'This book is not in your library yet'}
+              </div>
+            )}
             {club.bookVisibleToMembers && (
               <div className="text-[10px] text-green-500/80 flex items-center justify-center gap-1 bg-green-500/10 py-1 px-3 rounded-full mx-auto w-max border border-green-500/20">
                 <CheckCircle className="w-3 h-3" />
@@ -174,7 +186,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
 
         {/* Challenge books (multi-book competitions inside the club) */}
         {club.privacy !== 'personal' && (
-          <ClubBooksSection lang={lang} club={club} canManage={isOwner || isOwnerOrAdmin} books={books} />
+          <ClubBooksSection lang={lang} club={club} canManage={isOwner || isOwnerOrAdmin} books={books} onOpenBook={onOpenReader} />
         )}
 
         {/* Invite Section (Admins/Owners) */}
