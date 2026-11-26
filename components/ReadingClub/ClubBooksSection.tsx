@@ -1,27 +1,31 @@
 // ══════════════════════════════════════════════════════════════
 // CLUB BOOKS SECTION — كتب المنافسة داخل النادي (عدة كتب لنفس النادي)
+// • المالك/المشرف: إضافة كتب (حتى بعد اختيار الكتاب الأول) وإزالتها
+// • كل عضو: فتح الكتاب من مكتبته، الانضمام لمنافسته، أو الانسحاب منها بشكل مستقل لكل كتاب
 // ══════════════════════════════════════════════════════════════
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { BookOpen, Plus, Trash2, Trophy, Loader2, ChevronDown, X } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Trophy, Loader2, ChevronDown, X, LogIn, LogOut, ExternalLink } from 'lucide-react';
 import type { ReadingClub } from '../../types/readingClub';
 import type { ClubBookEntry, ChallengeParticipant } from '../../types/challenge';
-import { challengeService } from '../../services/challengeService';
+import { challengeService, titleMatches } from '../../services/challengeService';
 
 interface Props {
   lang: 'ar' | 'en';
   club: ReadingClub;
   /** مالك أو مشرف */
   canManage: boolean;
-  /** مكتبة المستخدم لاختيار كتاب منها (اختياري) */
+  /** مكتبة المستخدم */
   books?: any[];
+  /** فتح كتاب من المكتبة في القارئ */
+  onOpenBook?: (book: any) => void;
 }
 
-export default function ClubBooksSection({ lang, club, canManage, books }: Props) {
+export default function ClubBooksSection({ lang, club, canManage, books, onOpenBook }: Props) {
   const isRTL = lang === 'ar';
   const isChallengeGroup = (club.description || '').startsWith('منافسة كتاب:');
 
-  const [entries, setEntries] = useState<ClubBookEntry[]>(() => challengeService.getCachedClubBooks(club._id));
+  const [entries, setEntries] = useState<ClubBookEntry[]>(() => challengeService.getCachedClubBooks(club._id, club));
   const [boards, setBoards] = useState<Record<string, ChallengeParticipant[]>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -30,36 +34,75 @@ export default function ClubBooksSection({ lang, club, canManage, books }: Props
   const [author, setAuthor] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  const [confirmLeave, setConfirmLeave] = useState<string | null>(null);
+  const [mine, setMine] = useState(() => challengeService.getMyClubParticipation(club._id));
+  const [note, setNote] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const list = await challengeService.getClubBooks(club._id);
+      if (canManage) await challengeService.registerCurrentBook(club._id, club).catch(() => {});
+      const list = await challengeService.getClubBooks(club._id, club);
       setEntries(list);
       if (list.length) setBoards(await challengeService.fetchClubBoards(club._id, list.map(b => b.key)));
+      setMine(challengeService.getMyClubParticipation(club._id));
     } finally { setLoading(false); }
-  }, [club._id]);
+  }, [club, canManage]);
 
   useEffect(() => { if (!isChallengeGroup) load(); else setLoading(false); }, [load, isChallengeGroup]);
 
   if (isChallengeGroup) return null;
 
+  const library = (books || []).filter(b => b && b.title);
+  const findLibraryBook = (e: ClubBookEntry) => library.find(b => titleMatches(b.title, e.title));
+  const participation = (e: ClubBookEntry) => mine.find(m => m.bookKey === e.key);
+  const flash = (m: string) => { setNote(m); setTimeout(() => setNote(''), 3500); };
+
   const handleAdd = async () => {
     if (!title.trim()) return;
     setBusy(true);
     try {
-      const next = await challengeService.addClubBook(club._id, title, author);
-      setEntries(next);
+      await challengeService.addClubBook(club._id, title, author);
+      setEntries(await challengeService.getClubBooks(club._id, club));
       setTitle(''); setAuthor(''); setAdding(false);
     } finally { setBusy(false); }
   };
 
   const handleRemove = async (key: string) => {
     setBusy(true);
-    try { setEntries(await challengeService.removeClubBook(club._id, key)); }
-    finally { setBusy(false); setConfirmKey(null); }
+    try {
+      await challengeService.removeClubBook(club._id, key);
+      setEntries(await challengeService.getClubBooks(club._id, club));
+    } finally { setBusy(false); setConfirmKey(null); }
   };
 
-  const library = (books || []).filter(b => b && b.title);
+  const handleJoin = async (e: ClubBookEntry) => {
+    const lib = findLibraryBook(e);
+    if (!lib) { flash(isRTL ? 'هذا الكتاب غير موجود في مكتبتك' : 'This book is not in your library'); return; }
+    const identity = challengeService.getIdentity();
+    if (!identity) {
+      // لا هوية محفوظة بعد: نفتح الكتاب ليُكمل الانضمام من نافذة المنافسة
+      onOpenBook?.(lib);
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await challengeService.joinClubBook(identity, club, e, lib.id, lib.title, lib.author || '', canManage);
+      if (r.success) { setMine(challengeService.getMyClubParticipation(club._id)); flash(isRTL ? 'انضممت للمنافسة' : 'Joined'); load(); }
+      else flash(r.error || (isRTL ? 'تعذّر الانضمام' : 'Could not join'));
+    } finally { setBusy(false); }
+  };
+
+  const handleLeave = async (e: ClubBookEntry) => {
+    const p = participation(e);
+    if (!p) return;
+    setBusy(true);
+    try {
+      await challengeService.leaveChallenge(p.bookId);
+      setMine(challengeService.getMyClubParticipation(club._id));
+      flash(isRTL ? 'انسحبت من منافسة هذا الكتاب' : 'Left this book\'s challenge');
+      load();
+    } finally { setBusy(false); setConfirmLeave(null); }
+  };
 
   return (
     <div className="bg-amber-900/10 border border-amber-700/30 rounded-xl p-4 space-y-3" dir={isRTL ? 'rtl' : 'ltr'}>
@@ -120,6 +163,8 @@ export default function ClubBooksSection({ lang, club, canManage, books }: Props
         </div>
       )}
 
+      {note && <p className="text-[11px] font-black text-amber-300 text-center">{note}</p>}
+
       {loading && entries.length === 0 ? (
         <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-amber-500" /></div>
       ) : entries.length === 0 ? (
@@ -133,20 +178,54 @@ export default function ClubBooksSection({ lang, club, canManage, books }: Props
           {entries.map(b => {
             const list = boards[b.key] || [];
             const isOpen = open === b.key;
+            const lib = findLibraryBook(b);
+            const part = participation(b);
             return (
               <div key={b.key} className="bg-black/40 border border-white/10 rounded-xl overflow-hidden">
-                <div className="flex items-center gap-3 p-3">
-                  <button onClick={() => setOpen(isOpen ? null : b.key)} className="flex items-center gap-3 min-w-0 flex-1 text-start">
+                <div className="flex items-center gap-2 p-3">
+                  <button
+                    onClick={() => (lib && onOpenBook ? onOpenBook(lib) : setOpen(isOpen ? null : b.key))}
+                    className="flex items-center gap-3 min-w-0 flex-1 text-start"
+                  >
                     <BookOpen className="w-4 h-4 text-amber-500 shrink-0" />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-black text-white truncate">{b.title}</span>
+                      <span className="flex items-center gap-1.5 text-sm font-black text-white">
+                        <span className="truncate">{b.title}</span>
+                        {lib && onOpenBook && <ExternalLink size={11} className="text-white/30 shrink-0" />}
+                      </span>
                       <span className="block text-[10px] font-bold text-white/35 truncate">
                         {b.author ? `${b.author} · ` : ''}{list.length} {isRTL ? 'متنافس' : 'competitors'}
-                        {list[0] ? ` · 👑 ${list[0].name}` : ''}
+                        {part ? (isRTL ? ' · أنت مشارك' : ' · joined') : ''}
+                        {!lib ? (isRTL ? ' · ليس في مكتبتك' : ' · not in library') : ''}
                       </span>
                     </span>
-                    <ChevronDown size={16} className={`text-white/30 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                   </button>
+
+                  <button onClick={() => setOpen(isOpen ? null : b.key)} aria-label={isRTL ? 'الصدارة' : 'Leaderboard'}
+                    className="w-9 h-9 shrink-0 rounded-lg bg-white/5 text-white/40 flex items-center justify-center">
+                    <ChevronDown size={16} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {part ? (
+                    confirmLeave === b.key ? (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button onClick={() => handleLeave(b)} disabled={busy}
+                          className="h-9 px-3 rounded-lg bg-red-600 text-white text-[11px] font-black whitespace-nowrap">{isRTL ? 'انسحاب' : 'Leave'}</button>
+                        <button onClick={() => setConfirmLeave(null)} className="w-9 h-9 rounded-lg bg-white/5 text-white/50 flex items-center justify-center"><X size={14} /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmLeave(b.key)} aria-label={isRTL ? 'انسحاب' : 'Leave'}
+                        className="w-9 h-9 shrink-0 rounded-lg bg-orange-600/10 border border-orange-600/25 text-orange-400 flex items-center justify-center">
+                        <LogOut size={14} className={isRTL ? 'rotate-180' : ''} />
+                      </button>
+                    )
+                  ) : (
+                    <button onClick={() => handleJoin(b)} disabled={busy || !lib} aria-label={isRTL ? 'انضمام' : 'Join'}
+                      className="w-9 h-9 shrink-0 rounded-lg bg-emerald-600/15 border border-emerald-600/30 text-emerald-400 flex items-center justify-center disabled:opacity-30">
+                      <LogIn size={14} className={isRTL ? 'rotate-180' : ''} />
+                    </button>
+                  )}
+
                   {canManage && (
                     confirmKey === b.key ? (
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -179,8 +258,8 @@ export default function ClubBooksSection({ lang, club, canManage, books }: Props
       )}
       <p className="text-[9px] font-bold text-white/25 leading-relaxed">
         {isRTL
-          ? 'لكل كتاب منافسته المستقلة. ينضم الأعضاء من نافذة «منافسة الكتاب» داخل القارئ عند فتح الكتاب نفسه.'
-          : 'Each book has its own competition. Members join from the Book Challenge window in the reader.'}
+          ? 'لكل كتاب منافسته المستقلة: اضغط الكتاب لفتحه، وزر الدخول للانضمام، وزر الخروج للانسحاب من هذا الكتاب فقط.'
+          : 'Each book has its own challenge: tap a book to open it, use the join / leave buttons per book.'}
       </p>
     </div>
   );
