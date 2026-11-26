@@ -34,7 +34,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 }) => {
   const isRTL = lang === 'ar';
   const [typed, setTyped] = React.useState('');
-  const phraseOk = !confirmPhrase || typed.trim() === confirmPhrase;
+  const phraseOk = !confirmPhrase || typed.trim().toLowerCase() === confirmPhrase.toLowerCase();
 
   const rows = [
     { label: isRTL ? 'العنصر' : 'ITEM', value: itemName },
