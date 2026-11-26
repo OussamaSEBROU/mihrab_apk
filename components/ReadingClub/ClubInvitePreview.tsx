@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, Loader2, Users, BookOpen, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 import { clubInvitesAPI } from '../../services/readingClubAPI';
+import { readingClubAuth } from '../../services/readingClubAuth';
 
 const MotionDiv = motion.div as any;
 
@@ -21,6 +22,8 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
   const [isLoading, setIsLoading] = useState(true);
   const [isJoining, setIsJoining] = useState(false);
   const [joinStatus, setJoinStatus] = useState('');
+  // اسم المنضمّ يُكتب قبل الانضمام (يُعرض للأعضاء)
+  const [nickname, setNickname] = useState(userProfile?.nickname || '');
 
   const fetchPreview = async () => {
     setIsLoading(true);
@@ -45,9 +48,14 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
 
   const handleJoin = async () => {
     if (!userProfile) return;
+    const name = nickname.trim();
+    if (!name) { setError(isRTL ? 'اكتب اسمك قبل الانضمام' : 'Enter your name before joining'); return; }
     setIsJoining(true);
     setError('');
     try {
+      if (name !== userProfile.nickname) {
+        await readingClubAuth.updateProfile({ nickname: name }).catch(() => false);
+      }
       const res = await clubInvitesAPI.join(inviteToken);
       if (res.ok && res.data) {
         if (res.data.status === 'pending') {
@@ -127,12 +135,28 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
               </div>
             )}
 
+            {userProfile && (
+              <div className="mb-4">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+                  {isRTL ? 'اسمك في النادي' : 'YOUR NAME IN THE CLUB'}
+                </label>
+                <input
+                  value={nickname}
+                  onChange={e => setNickname(e.target.value)}
+                  maxLength={30}
+                  autoComplete="off"
+                  placeholder={isRTL ? 'اكتب اسمك…' : 'Type your name…'}
+                  className="w-full bg-black/50 border border-white/10 rounded-xl py-3 px-4 text-white font-bold focus:outline-none focus:border-red-500"
+                />
+              </div>
+            )}
+
             {!userProfile ? (
               <div className="text-center text-yellow-500 text-sm font-bold bg-yellow-900/20 p-4 rounded-xl">
                 {isRTL ? 'يجب إعداد ملفك الشخصي أولاً للانضمام.' : 'You must setup your profile first to join.'}
               </div>
             ) : (
-              <button onClick={handleJoin} disabled={isJoining} className="w-full bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-widest py-4 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50">
+              <button onClick={handleJoin} disabled={isJoining || !nickname.trim()} className="w-full bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-widest py-4 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50">
                 {isJoining ? <Loader2 className="animate-spin" size={20} /> : (isRTL ? 'انضمام للنادي' : 'Join Club')}
               </button>
             )}
