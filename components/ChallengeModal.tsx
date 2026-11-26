@@ -103,7 +103,7 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
 
     const identity: ChallengeIdentity = { name: name.trim(), country };
 
-    // داخل نادٍ: الكتاب يُسجَّل في سجل النادي ويُستعمل رمز دعوة النادي نفسه
+    // داخل نادٍ: الكتاب يُسجّل في سجل النادي ويُستعمل رمز دعوة النادي نفسه
     if (targetClubId) {
       const target = myClubs.find(c => c.club._id === targetClubId);
       if (target) {
@@ -144,7 +144,12 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
       setPickData(result.pending);
       setMode('pick');
     } else {
-      setError(result.error || (isRTL ? 'رمز المنافسة غير صحيح' : 'Invalid challenge code'));
+      const raw = result.error || '';
+      setError(
+        !raw || /not found|404|invalid/i.test(raw)
+          ? (isRTL ? 'رمز المنافسة غير صحيح — الصق الرمز كاملاً أو رابط الدعوة' : 'Invalid challenge code — paste the full code or invite link')
+          : raw
+      );
     }
   }, [name, country, pin, book, isRTL, onClose, onChallengeReady]);
 
@@ -388,7 +393,7 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
                     ? () => chosenMatch && joinPicked(chosenMatch.club, chosenMatch.entry, chosenMatch.canManage)
                     : handleJoin}
                   disabled={isLoading || !name.trim() || !country || (mode === 'join' && !pin.trim())}
-                  className={`flex-[2] px-4 py-3 rounded-xl text-white font-black uppercase text-xs shadow-lg transition-all disabled:opacity-40 flex items-center justify-center gap-2 ${
+                  className={`flex-[2] px-4 py-3 rounded-xl text-white font-black uppercase text-xs shadow-lg transition-all disabled:opacity-40 flex items-center justify-center gap-2 active:scale-95 ${
                     mode === 'create'
                       ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/30'
                       : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/30'
