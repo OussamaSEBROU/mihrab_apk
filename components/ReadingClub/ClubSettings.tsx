@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Save, Trash2, Loader2, AlertCircle, BookOpen, Ey
 import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 import { clubGroupsAPI, clubBookAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
+import ClubBooksSection from './ClubBooksSection';
 
 const MotionDiv = motion.div as any;
 
@@ -263,6 +264,11 @@ export default function ClubSettings({ lang, club, userProfile, isOwner, books, 
               </select>
             </div>
           )}
+
+          {/* كتب المنافسة — إضافة كتب جديدة للنادي حتى بعد اختيار الكتاب الأول */}
+          <div className="mb-4">
+            <ClubBooksSection lang={lang} club={club} canManage={true} books={books} />
+          </div>
 
           {/* Book Visibility Toggle */}
           <label className="flex items-center justify-between cursor-pointer bg-black/30 border border-white/10 rounded-xl p-4 mb-3">
