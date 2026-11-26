@@ -621,3 +621,259 @@ export const challengeService = {
       else list.push(myParticipant);
       challenges[idx].lastSyncedAt = Date.now();
       saveChallenges(challenges);
+    }
+
+    // 2) سحابياً — مع تجنب تكرار نفس الحالة (إلا نبضة كل 5 دقائق ليبقى أثرك داخل نافذة الرسائل)
+    const sig = `${currentPage}|${totalPages}|${readingMinutes}|${stars}|${identity.name}|${identity.country}`;
+    const last = _lastSent.get(bookId);
+    if (last && last.sig === sig && Date.now() - last.at < HEARTBEAT_MS) return;
+
+    try {
+      const res: any = await clubMessagesAPI.send(challenge.id, {
+        body: buildProgressPayload(identity, currentPage, totalPages, readingMinutes, stars, challenge.clubId ? challenge.bookKey : undefined),
+        type: 'thought',
+      });
+      if (!res || res.ok !== false) _lastSent.set(bookId, { sig, at: Date.now() });
+    } catch (e) {
+      console.warn('[Challenge] Progress sync failed:', e);
+    }
+  },
+
+  // ─── Fetch Leaderboard ──────────────────────────────────────
+  // يعيد دائماً قائمة غير فارغة قدر الإمكان: يدمج السحابة مع الذاكرة المحلية (أحدث وقت يفوز)
+  // بحيث لا يختفي متنافس لمجرد أن رسالته خرجت من نافذة آخر 200 رسالة.
+  getCachedLeaderboard: (bookId: string): ChallengeParticipant[] => {
+    const challenge = getChallenges().find(c => c.bookId === bookId);
+    return challenge ? sortParticipants(challenge.participants || []) : [];
+  },
+
+  fetchLeaderboard: (bookId: string): Promise<ChallengeParticipant[]> =>
+   once(`board:${bookId}`, async () => {
+    const challenge = getChallenges().find(c => c.bookId === bookId);
+    if (!challenge) return [];
+    const cached = () => sortParticipants(challenge.participants || []);
+
+    try {
+      // مهلة قصوى: لا ننتظر سيرفراً نائماً أكثر من 12 ثانية والواجهة تعرض المخزَّن
+      const messagesResult: any = await Promise.race([
+        clubMessagesAPI.list(challenge.id, undefined, 200),
+        new Promise((resolve) => setTimeout(() => resolve(null), 12000)),
+      ]);
+      if (!messagesResult || !messagesResult.ok || !messagesResult.data?.messages) {
+        return cached();
+      }
+
+      // Parse progress messages — keep only latest per user
+      const latestByUser = new Map<string, ChallengeParticipant>();
+
+      // ابدأ من النسخة المحلية ثم دع السحابة تتفوق عند كونها أحدث
+      for (const p of challenge.participants || []) latestByUser.set(p.userId, p);
+
+      const seriesByUser = new Map<string, ChallengePoint[]>();
+
+      for (const msg of messagesResult.data.messages) {
+        const progress = isProgressMessage(msg.body || '');
+        if (!progress) continue;
+        // داخل نادي: لكل كتاب منافسته الخاصة
+        if (challenge.clubId && progress.bookKey !== challenge.bookKey) continue;
+
+        const authorId = typeof msg.authorId === 'object' ? msg.authorId._id : msg.authorId;
+        // كل رسالة تقدّم = نقطة على منحنى صاحبها
+        const pts = seriesByUser.get(authorId) || [];
+        pts.push({
+          t: progress.timestamp,
+          m: progress.readingMinutes,
+          p: progress.percentComplete,
+          s: progress.stars,
+          sc: progress.readingMinutes + progress.percentComplete,
+        });
+        seriesByUser.set(authorId, pts);
+
+        const existing = latestByUser.get(authorId);
+
+        if (!existing || progress.timestamp > existing.lastUpdated) {
+          latestByUser.set(authorId, {
+            userId: authorId,
+            name: progress.name,
+            country: progress.country,
+            currentPage: progress.currentPage,
+            totalPages: progress.totalPages,
+            percentComplete: progress.percentComplete,
+            readingMinutes: progress.readingMinutes,
+            stars: progress.stars,
+            lastUpdated: progress.timestamp,
+            score: progress.readingMinutes + progress.percentComplete,
+          });
+        }
+      }
+
+      // دمج السجل السحابي مع المحلي (النافذة 200 رسالة قد لا تحمل كل التاريخ)
+      const withHistory = Array.from(latestByUser.values()).map(p => ({
+        ...p,
+        history: mergeHistory(p.history || [], seriesByUser.get(p.userId) || []),
+      }));
+      const participants = sortParticipants(withHistory);
+
+      // Update local cache
+      const challenges = getChallenges();
+      const idx = challenges.findIndex(c => c.bookId === bookId);
+      if (idx !== -1) {
+        challenges[idx].participants = participants;
+        challenges[idx].lastSyncedAt = Date.now();
+        saveChallenges(challenges);
+      }
+
+      return participants;
+    } catch (e) {
+      console.warn('[Challenge] Leaderboard fetch failed:', e);
+      return cached();
+    }
+   }),
+
+  // ─── Leave Challenge ────────────────────────────────────────
+  leaveChallenge: async (bookId: string): Promise<void> => {
+    const challenge = getChallenges().find(c => c.bookId === bookId);
+    if (challenge) {
+      // منافسة داخل نادي: نخرج من المنافسة فقط ونبقى عضواً في النادي
+      if (!challenge.clubId) {
+        try {
+          await clubMembersAPI.leaveGroup(challenge.id);
+        } catch {}
+      }
+      const challenges = getChallenges().filter(c => c.bookId !== bookId);
+      saveChallenges(challenges);
+      _lastSent.delete(bookId);
+    }
+  },
+
+  // ─── Store PIN↔Token mapping for joining ────────────────────
+  storePinMapping: (pin: string, token: string) => {
+    try {
+      const mapStr = localStorage.getItem('sanctuary_pin_map');
+      const map: Record<string, string> = mapStr ? JSON.parse(mapStr) : {};
+      map[pin] = token;
+      localStorage.setItem('sanctuary_pin_map', JSON.stringify(map));
+    } catch {}
+  },
+
+  // ═══════════════════════════════════════════════════════════
+  //  المنافسات داخل الأندية
+  // ═══════════════════════════════════════════════════════════
+  /** أنديتي الحقيقية (بلا مجموعات المنافسات المستقلة) */
+  getMyClubs: async (): Promise<{ club: ReadingClub; canManage: boolean }[]> => {
+    try {
+      const res: any = await clubGroupsAPI.getMyGroups();
+      const list: ReadingClub[] = res?.ok && Array.isArray(res.data) ? res.data : [];
+      const me = readingClubAuth.getLocalProfile()?.id || '';
+      return list
+        .filter(c => c.status !== 'deleted' && c.status !== 'archived' && c.privacy !== 'personal' && !isChallengeGroup(c))
+        .map(c => ({ club: c, canManage: ADMIN_ROLES.includes(c.myRole || '') || c.ownerId === me }));
+    } catch { return []; }
+  },
+
+  getClubBooks: (clubId: string) => fetchClubBooks(clubId),
+  getCachedClubBooks: (clubId: string): ClubBookEntry[] => readBooksCache(clubId).books,
+  fetchClubBoards: (clubId: string, keys: string[]) => fetchClubBoards(clubId, keys),
+
+  addClubBook: async (clubId: string, title: string, author: string): Promise<ClubBookEntry[]> => {
+    const books = await fetchClubBooks(clubId);
+    const key = makeBookKey(title);
+    if (!title.trim() || books.some(b => b.key === key)) return books;
+    const next = [...books, { key, title: title.trim(), author: (author || '').trim() }];
+    await postBooksSnapshot(clubId, next);
+    return next;
+  },
+
+  removeClubBook: async (clubId: string, key: string): Promise<ClubBookEntry[]> => {
+    const books = await fetchClubBooks(clubId);
+    const next = books.filter(b => b.key !== key);
+    await postBooksSnapshot(clubId, next);
+    return next;
+  },
+
+  /** المنافسات في أنديتي التي تطابق كتابي (للانضمام بلا رمز) */
+  getClubCompetitionsForBook: async (bookTitle: string) => {
+    const clubs = (await challengeService.getMyClubs()).slice(0, 10);
+    const lists = await Promise.all(clubs.map(async c => ({ ...c, books: await fetchClubBooks(c.club._id) })));
+    const out: { club: ReadingClub; canManage: boolean; entry: ClubBookEntry }[] = [];
+    for (const c of lists) {
+      const hit = c.books.find(b => titleMatches(b.title, bookTitle));
+      if (hit) out.push({ club: c.club, canManage: c.canManage, entry: hit });
+    }
+    return { clubs: lists, matches: out };
+  },
+
+  /** إنشاء منافسة لكتابي داخل نادٍ أديره (يُسجَّل الكتاب في سجل النادي) */
+  createChallengeInClub: (
+    identity: ChallengeIdentity,
+    club: ReadingClub,
+    bookId: string,
+    bookTitle: string,
+    bookAuthor: string
+  ): Promise<{ success: boolean; challenge?: BookChallenge; code?: string; error?: string }> =>
+   once(`createclub:${bookId}`, async () => {
+    try {
+      if (!readingClubAuth.isLoggedIn()) {
+        const reg = await readingClubAuth.register(identity.name, 0);
+        if (!reg.success) return { success: false, error: reg.error || 'Registration failed' };
+      }
+      readingClubAuth.updateProfile({ nickname: identity.name }).catch(() => {});
+
+      const token = await clubInviteCode.ensure(club._id, club);
+      if (!token) return { success: false, error: 'Failed to read club invite code' };
+
+      const books = await challengeService.addClubBook(club._id, bookTitle, bookAuthor);
+      const entry = books.find(b => b.key === makeBookKey(bookTitle));
+      if (!entry) return { success: false, error: 'Failed to register book in club' };
+
+      saveIdentity(identity);
+      const challenge = buildClubChallenge(club, entry, identity, bookId, bookTitle, bookAuthor, token, true);
+      saveChallenges([...getChallenges().filter(c => c.bookId !== bookId), challenge]);
+
+      Promise.resolve(clubMessagesAPI.send(club._id, {
+        body: buildProgressPayload(identity, 0, 0, 0, 0, entry.key),
+        type: 'announcement',
+      })).catch(() => {});
+      return { success: true, challenge, code: token };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Unknown error' };
+    }
+   }),
+
+  /** المشاركة في كتاب مسجَّل في نادٍ أنا عضو فيه (بلا رمز) */
+  joinClubBook: (
+    identity: ChallengeIdentity,
+    club: { _id: string; name: string; inviteCode?: string },
+    entry: ClubBookEntry,
+    bookId: string,
+    bookTitle: string,
+    bookAuthor: string,
+    isManager = false
+  ): Promise<{ success: boolean; challenge?: BookChallenge; error?: string }> =>
+   once(`joinclub:${bookId}`, async () => {
+    try {
+      if (!readingClubAuth.isLoggedIn()) {
+        const reg = await readingClubAuth.register(identity.name, 0);
+        if (!reg.success) return { success: false, error: reg.error || 'Registration failed' };
+      }
+      readingClubAuth.updateProfile({ nickname: identity.name }).catch(() => {});
+      saveIdentity(identity);
+      const token = clubInviteCode.get(club._id, club) || '';
+      const challenge = buildClubChallenge(club, entry, identity, bookId, bookTitle, bookAuthor, token, isManager);
+      saveChallenges([...getChallenges().filter(c => c.bookId !== bookId), challenge]);
+      Promise.resolve(clubMessagesAPI.send(club._id, {
+        body: buildProgressPayload(identity, 0, 0, 0, 0, entry.key),
+        type: 'announcement',
+      })).catch(() => {});
+      return { success: true, challenge };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Unknown error' };
+    }
+   }),
+
+  // ─── Get the PIN for sharing ────────────────────────────────
+  getShareablePin: (bookId: string): string | null => {
+    const challenge = getChallenges().find(c => c.bookId === bookId);
+    return challenge?.inviteToken || challenge?.pin || null;
+  },
+};
