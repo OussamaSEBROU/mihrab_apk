@@ -244,3 +244,47 @@ export const clubAuditAPI = {
     );
   },
 };
+
+// ══════════════════════════════════════════════════════════════
+// FILES — رفع مرفقات المحادثة (حتى 100MB)
+// العقد المطلوب من الخادم: POST /groups/:id/files (multipart/form-data، الحقل «file»)
+// يردّ بـ { url, fileName?, mimeType?, size? } ويكون الرابط قابلاً للقراءة من أعضاء المجموعة.
+// ══════════════════════════════════════════════════════════════
+export const CLUB_FILE_MAX_BYTES = 100 * 1024 * 1024;
+
+export const clubFilesAPI = {
+  upload: (
+    groupId: string,
+    file: File,
+    onProgress?: (pct: number) => void
+  ): Promise<{ ok: boolean; url?: string; error?: string }> =>
+    new Promise((resolve) => {
+      if (file.size > CLUB_FILE_MAX_BYTES) { resolve({ ok: false, error: 'FILE_TOO_LARGE' }); return; }
+      const base = readingClubAuth.API_BASE;
+      const token = readingClubAuth.getToken();
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${base}/groups/${groupId}/files`);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.timeout = 15 * 60 * 1000;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+      };
+      xhr.onerror = () => resolve({ ok: false, error: 'NETWORK' });
+      xhr.ontimeout = () => resolve({ ok: false, error: 'TIMEOUT' });
+      xhr.onload = () => {
+        let body: any = {};
+        try { body = JSON.parse(xhr.responseText || '{}'); } catch {}
+        if (xhr.status >= 200 && xhr.status < 300) {
+          let url: string | undefined = body.url || body.data?.url || body.file?.url;
+          if (url && url.startsWith('/')) url = base.replace(/\/api\/?$/, '') + url;
+          if (url) { onProgress?.(100); resolve({ ok: true, url }); return; }
+          resolve({ ok: false, error: 'NO_URL' });
+          return;
+        }
+        resolve({ ok: false, error: xhr.status === 404 ? 'NOT_SUPPORTED' : (body.error || `HTTP ${xhr.status}`) });
+      };
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      xhr.send(fd);
+    }),
+};
