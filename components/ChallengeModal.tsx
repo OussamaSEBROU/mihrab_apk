@@ -2,15 +2,17 @@
 // CHALLENGE MODAL — Create / Join a Book Challenge
 // ══════════════════════════════════════════════════════════════
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, X, Plus, LogIn, Copy, Check, Loader2,
-  Globe, User, BookOpen, Share2, Flag
+  Globe, User, BookOpen, Share2, Flag, Link2, Users
 } from 'lucide-react';
 import type { Language, Book } from '../types';
 import { challengeService } from '../services/challengeService';
-import type { ChallengeIdentity } from '../types/challenge';
+import { clubInviteCode } from '../services/clubInviteCode';
+import type { ChallengeIdentity, ClubBookEntry } from '../types/challenge';
+import type { ReadingClub } from '../types/readingClub';
 
 const MotionDiv = motion.div as any;
 
@@ -65,7 +67,7 @@ interface Props {
 
 export default function ChallengeModal({ lang, book, onClose, onChallengeReady }: Props) {
   const isRTL = lang === 'ar';
-  const [mode, setMode] = useState<'choose' | 'create' | 'join' | 'success'>('choose');
+  const [mode, setMode] = useState<'choose' | 'create' | 'join' | 'clubjoin' | 'pick' | 'success'>('choose');
   const [name, setName] = useState(() => challengeService.getIdentity()?.name || '');
   const [country, setCountry] = useState(() => challengeService.getIdentity()?.country || '');
   const [pin, setPin] = useState('');
@@ -73,6 +75,26 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  // ── أندية المستخدم ومنافساتها المطابقة لهذا الكتاب ──
+  const [myClubs, setMyClubs] = useState<{ club: ReadingClub; canManage: boolean }[]>([]);
+  const [matches, setMatches] = useState<{ club: ReadingClub; canManage: boolean; entry: ClubBookEntry }[]>([]);
+  const [targetClubId, setTargetClubId] = useState('');          // '' = منافسة مستقلة
+  const [chosenMatch, setChosenMatch] = useState<{ club: ReadingClub; canManage: boolean; entry: ClubBookEntry } | null>(null);
+  const [pickData, setPickData] = useState<{ club: { _id: string; name: string; inviteCode: string }; books: ClubBookEntry[] } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    challengeService.getClubCompetitionsForBook(book.title).then(r => {
+      if (!alive) return;
+      setMyClubs(r.clubs.map(c => ({ club: c.club, canManage: c.canManage })));
+      setMatches(r.matches);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [book.title]);
+
+  const manageableClubs = myClubs.filter(c => c.canManage);
 
   const handleCreate = useCallback(async () => {
     if (!name.trim() || !country) return;
@@ -80,6 +102,19 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
     setError('');
 
     const identity: ChallengeIdentity = { name: name.trim(), country };
+
+    // داخل نادٍ: الكتاب يُسجَّل في سجل النادي ويُستعمل رمز دعوة النادي نفسه
+    if (targetClubId) {
+      const target = myClubs.find(c => c.club._id === targetClubId);
+      if (target) {
+        const r = await challengeService.createChallengeInClub(identity, target.club, book.id, book.title, book.author);
+        setIsLoading(false);
+        if (r.success && r.code) { setGeneratedPin(r.code); setMode('success'); }
+        else setError(r.error || (isRTL ? 'فشل إنشاء المنافسة' : 'Failed to create challenge'));
+        return;
+      }
+    }
+
     const result = await challengeService.createChallenge(
       identity, book.id, book.title, book.author
     );
@@ -91,7 +126,7 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
     } else {
       setError(result.error || (isRTL ? 'فشل إنشاء المنافسة' : 'Failed to create challenge'));
     }
-  }, [name, country, book, isRTL]);
+  }, [name, country, book, isRTL, targetClubId, myClubs]);
 
   const handleJoin = useCallback(async () => {
     if (!name.trim() || !country || !pin.trim()) return;
@@ -99,16 +134,36 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
     setError('');
 
     const identity: ChallengeIdentity = { name: name.trim(), country };
-    const result = await challengeService.joinChallenge(identity, pin.trim(), book.id);
+    const result = await challengeService.joinChallenge(identity, pin.trim(), book.id, { title: book.title, author: book.author });
 
     setIsLoading(false);
     if (result.success) {
       onChallengeReady();
       onClose();
+    } else if (result.pending) {
+      setPickData(result.pending);
+      setMode('pick');
     } else {
       setError(result.error || (isRTL ? 'رمز المنافسة غير صحيح' : 'Invalid challenge code'));
     }
   }, [name, country, pin, book, isRTL, onClose, onChallengeReady]);
+
+  const joinPicked = useCallback(async (club: { _id: string; name: string; inviteCode?: string }, entry: ClubBookEntry, isManager: boolean) => {
+    if (!name.trim() || !country) { setError(isRTL ? 'أدخل اسمك وبلدك أولاً' : 'Enter your name and country first'); return; }
+    setIsLoading(true);
+    setError('');
+    const r = await challengeService.joinClubBook({ name: name.trim(), country }, club, entry, book.id, book.title, book.author, isManager);
+    setIsLoading(false);
+    if (r.success) { onChallengeReady(); onClose(); }
+    else setError(r.error || (isRTL ? 'تعذّر الانضمام' : 'Could not join'));
+  }, [name, country, book, isRTL, onClose, onChallengeReady]);
+
+  const handleCopyLink = useCallback(() => {
+    navigator.clipboard.writeText(clubInviteCode.link(generatedPin)).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    }).catch(() => {});
+  }, [generatedPin]);
 
   const handleCopyPin = useCallback(() => {
     navigator.clipboard.writeText(generatedPin).then(() => {
@@ -195,11 +250,33 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
                   </span>
                 </div>
               </button>
+
+              {matches.length > 0 && (
+                <div className="pt-2 space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40 px-1">
+                    {isRTL ? 'منافسات أنديتي لهذا الكتاب' : 'Your clubs\' challenges for this book'}
+                  </p>
+                  {matches.map(m => (
+                    <button
+                      key={m.club._id + m.entry.key}
+                      onClick={() => { setChosenMatch(m); setMode('clubjoin'); setError(''); }}
+                      className="w-full flex items-center gap-3 p-4 rounded-2xl bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] transition-all text-start"
+                    >
+                      <div className="p-2.5 rounded-xl bg-sky-600/20 shrink-0"><Users size={18} className="text-sky-400" /></div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-sm font-black text-white truncate">{m.club.name}</span>
+                        <span className="block text-[9px] font-bold text-white/30 truncate">{m.entry.title}</span>
+                      </div>
+                      <LogIn size={16} className="text-sky-400 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              )}
             </MotionDiv>
           )}
 
           {/* ─── CREATE / JOIN FORM ─── */}
-          {(mode === 'create' || mode === 'join') && (
+          {(mode === 'create' || mode === 'join' || mode === 'clubjoin') && (
             <MotionDiv key="form" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
               {/* Identity Section */}
               <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
@@ -239,6 +316,45 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
                 </div>
               </div>
 
+              {/* Club selector (Create mode only) */}
+              {mode === 'create' && manageableClubs.length > 0 && (
+                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Users size={14} className="text-sky-400" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-white/50">
+                      {isRTL ? 'ربط بنادٍ (اختياري)' : 'Link to a club (optional)'}
+                    </span>
+                  </div>
+                  <select
+                    value={targetClubId}
+                    onChange={e => setTargetClubId(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-sky-500/50 transition-all text-sm font-bold appearance-none"
+                    dir={isRTL ? 'rtl' : 'ltr'}
+                  >
+                    <option value="" className="bg-black">{isRTL ? 'منافسة مستقلة' : 'Standalone challenge'}</option>
+                    {manageableClubs.map(c => (
+                      <option key={c.club._id} value={c.club._id} className="bg-black">{c.club.name}</option>
+                    ))}
+                  </select>
+                  {targetClubId && (
+                    <p className="mt-2 text-[9px] font-bold text-white/30 leading-relaxed">
+                      {isRTL ? 'سيُضاف الكتاب لمنافسات النادي، ويستعمل رمز دعوة النادي نفسه.' : 'The book joins the club\'s challenges and uses the club\'s own invite code.'}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Selected club challenge (clubjoin mode) */}
+              {mode === 'clubjoin' && chosenMatch && (
+                <div className="p-4 rounded-xl bg-sky-600/10 border border-sky-600/20 flex items-center gap-3">
+                  <Users size={18} className="text-sky-400 shrink-0" />
+                  <div className="min-w-0">
+                    <span className="block text-sm font-black text-white truncate">{chosenMatch.club.name}</span>
+                    <span className="block text-[9px] font-bold text-white/40 truncate">{chosenMatch.entry.title}</span>
+                  </div>
+                </div>
+              )}
+
               {/* PIN Input (Join mode only) */}
               {mode === 'join' && (
                 <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
@@ -268,9 +384,11 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
                   {isRTL ? 'رجوع' : 'Back'}
                 </button>
                 <button
-                  onClick={mode === 'create' ? handleCreate : handleJoin}
+                  onClick={mode === 'create' ? handleCreate : mode === 'clubjoin'
+                    ? () => chosenMatch && joinPicked(chosenMatch.club, chosenMatch.entry, chosenMatch.canManage)
+                    : handleJoin}
                   disabled={isLoading || !name.trim() || !country || (mode === 'join' && !pin.trim())}
-                  className={`flex-[2] px-4 py-3 rounded-xl text-white font-black uppercase text-xs shadow-lg transition-all disabled:opacity-40 flex items-center justify-center gap-2 active:scale-95 ${
+                  className={`flex-[2] px-4 py-3 rounded-xl text-white font-black uppercase text-xs shadow-lg transition-all disabled:opacity-40 flex items-center justify-center gap-2 ${
                     mode === 'create'
                       ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/30'
                       : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/30'
@@ -287,6 +405,35 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
                   }
                 </button>
               </div>
+            </MotionDiv>
+          )}
+
+          {/* ─── PICK BOOK: النادي يضم عدة كتب ─── */}
+          {mode === 'pick' && pickData && (
+            <MotionDiv key="pick" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-3">
+              <p className="text-xs font-bold text-white/60 leading-relaxed">
+                {isRTL ? `نادي «${pickData.club.name}» يضم عدة كتب. اختر الكتاب الذي تقرؤه:` : `"${pickData.club.name}" has several books. Pick the one you're reading:`}
+              </p>
+              {pickData.books.map(b => (
+                <button
+                  key={b.key}
+                  disabled={isLoading}
+                  onClick={() => joinPicked(pickData.club, b, false)}
+                  className="w-full flex items-center gap-3 p-4 rounded-2xl bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] transition-all text-start disabled:opacity-40"
+                >
+                  <BookOpen size={18} className="text-emerald-400 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-black text-white truncate">{b.title}</span>
+                    {b.author && <span className="block text-[9px] font-bold text-white/30 truncate">{b.author}</span>}
+                  </span>
+                </button>
+              ))}
+              <button
+                onClick={() => { setMode('choose'); setPickData(null); setError(''); }}
+                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-black uppercase text-xs"
+              >
+                {isRTL ? 'رجوع' : 'Back'}
+              </button>
             </MotionDiv>
           )}
 
@@ -323,6 +470,13 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
                 >
                   {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                   {copied ? (isRTL ? 'تم النسخ!' : 'Copied!') : (isRTL ? 'نسخ الرمز' : 'Copy Code')}
+                </button>
+                <button
+                  onClick={handleCopyLink}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white font-black uppercase text-xs hover:bg-white/10 transition-all"
+                >
+                  {linkCopied ? <Check size={14} className="text-emerald-400" /> : <Link2 size={14} />}
+                  {linkCopied ? (isRTL ? 'تم النسخ!' : 'Copied!') : (isRTL ? 'نسخ الرابط' : 'Copy Link')}
                 </button>
               </div>
 
