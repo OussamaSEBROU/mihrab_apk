@@ -136,6 +136,18 @@ export const titleMatches = (a: string, b: string): boolean => {
 const isChallengeGroup = (g: { description?: string } | null | undefined) =>
   !!g && (g.description || '').startsWith('منافسة كتاب:');
 
+/** كتاب النادي «الحالي» (المختار عند الإنشاء) يُعدّ ضمن المنافسة ولو لم يُسجَّل في السجل بعد */
+function withCurrentBook(
+  books: ClubBookEntry[],
+  club: { currentBookTitle?: string; currentBookAuthor?: string } | null | undefined
+): ClubBookEntry[] {
+  const title = (club?.currentBookTitle || '').trim();
+  if (!title) return books;
+  const key = makeBookKey(title);
+  if (books.some(b => b.key === key)) return books;
+  return [...books, { key, title, author: (club?.currentBookAuthor || '').trim() }];
+}
+
 function parseBooksSnapshot(body: string): ClubBooksSnapshotMessage | null {
   if (!body || body.charCodeAt(0) !== 123) return null;
   try {
@@ -151,7 +163,8 @@ function buildProgressPayload(
   totalPages: number,
   readingMinutes: number,
   stars: number,
-  bookKey?: string
+  bookKey?: string,
+  left?: boolean
 ): string {
   const msg: ChallengeProgressMessage = {
     _isChallengeProgress: true,
@@ -164,6 +177,7 @@ function buildProgressPayload(
     stars,
     timestamp: Date.now(),
     ...(bookKey ? { bookKey } : {}),
+    ...(left ? { left: true } : {}),
   };
   return JSON.stringify(msg);
 }
@@ -265,10 +279,16 @@ function fetchClubBoards(clubId: string, keys: string[]): Promise<Record<string,
       ]);
       if (!res || !res.ok || !res.data?.messages) return out;
       const latest = new Map<string, Map<string, ChallengeParticipant>>();
+      const leftAt = new Map<string, number>();   // bookKey|uid → وقت الانسحاب
       for (const msg of res.data.messages) {
         const pr = isProgressMessage(msg.body || '');
         if (!pr || !pr.bookKey || !keys.includes(pr.bookKey)) continue;
         const uid = authorOf(msg);
+        if (pr.left) {
+          const lk = `${pr.bookKey}|${uid}`;
+          leftAt.set(lk, Math.max(leftAt.get(lk) || 0, pr.timestamp));
+          continue;
+        }
         const m = latest.get(pr.bookKey) || new Map<string, ChallengeParticipant>();
         const ex = m.get(uid);
         if (!ex || pr.timestamp > ex.lastUpdated) {
@@ -281,6 +301,12 @@ function fetchClubBoards(clubId: string, keys: string[]): Promise<Record<string,
         }
         latest.set(pr.bookKey, m);
       }
+      leftAt.forEach((t, lk) => {
+        const [k, uid] = lk.split('|');
+        const m = latest.get(k);
+        const cur = m?.get(uid);
+        if (m && cur && cur.lastUpdated <= t) m.delete(uid);
+      });
       latest.forEach((m, k) => { out[k] = sortParticipants(Array.from(m.values())); });
     } catch {}
     return out;
@@ -511,7 +537,7 @@ export const challengeService = {
       // مجموعة نادي حقيقي (لا مجموعة منافسة مستقلة): الكتاب يُحدَّد من سجل كتب النادي
       let clubBook: ClubBookEntry | null = null;
       if (!isChallengeGroup(group)) {
-        const registry = await fetchClubBooks(group._id);
+        const registry = withCurrentBook(await fetchClubBooks(group._id), group);
         if (!registry.length) {
           return { success: false, error: 'هذا النادي لا يملك منافسات بعد — اطلب من المشرف إضافة الكتاب من صفحة النادي.' };
         }
@@ -670,6 +696,7 @@ export const challengeService = {
       for (const p of challenge.participants || []) latestByUser.set(p.userId, p);
 
       const seriesByUser = new Map<string, ChallengePoint[]>();
+      const leftAt = new Map<string, number>();
 
       for (const msg of messagesResult.data.messages) {
         const progress = isProgressMessage(msg.body || '');
@@ -678,6 +705,11 @@ export const challengeService = {
         if (challenge.clubId && progress.bookKey !== challenge.bookKey) continue;
 
         const authorId = typeof msg.authorId === 'object' ? msg.authorId._id : msg.authorId;
+        // انسحاب: لا يدخل في المنحنى ولا اللوحة (ما لم تأتِ بعده رسالة تقدّم أحدث)
+        if (progress.left) {
+          leftAt.set(authorId, Math.max(leftAt.get(authorId) || 0, progress.timestamp));
+          continue;
+        }
         // كل رسالة تقدّم = نقطة على منحنى صاحبها
         const pts = seriesByUser.get(authorId) || [];
         pts.push({
@@ -707,6 +739,12 @@ export const challengeService = {
         }
       }
 
+      // من انسحب ولم يعد بعد ذلك يُحذف من اللوحة
+      leftAt.forEach((t, uid) => {
+        const cur = latestByUser.get(uid);
+        if (cur && cur.lastUpdated <= t) latestByUser.delete(uid);
+      });
+
       // دمج السجل السحابي مع المحلي (النافذة 200 رسالة قد لا تحمل كل التاريخ)
       const withHistory = Array.from(latestByUser.values()).map(p => ({
         ...p,
@@ -734,8 +772,21 @@ export const challengeService = {
   leaveChallenge: async (bookId: string): Promise<void> => {
     const challenge = getChallenges().find(c => c.bookId === bookId);
     if (challenge) {
-      // منافسة داخل نادي: نخرج من المنافسة فقط ونبقى عضواً في النادي
-      if (!challenge.clubId) {
+      // منافسة داخل نادي: نخرج من منافسة هذا الكتاب فقط ونبقى عضواً في النادي
+      if (challenge.clubId) {
+        const identity = getIdentity();
+        if (identity && challenge.bookKey) {
+          try {
+            await Promise.race([
+              clubMessagesAPI.send(challenge.id, {
+                body: buildProgressPayload(identity, 0, 0, 0, 0, challenge.bookKey, true),
+                type: 'thought',
+              }),
+              new Promise((resolve) => setTimeout(resolve, 6000)),
+            ]);
+          } catch {}
+        }
+      } else {
         try {
           await clubMembersAPI.leaveGroup(challenge.id);
         } catch {}
@@ -771,8 +822,20 @@ export const challengeService = {
     } catch { return []; }
   },
 
-  getClubBooks: (clubId: string) => fetchClubBooks(clubId),
-  getCachedClubBooks: (clubId: string): ClubBookEntry[] => readBooksCache(clubId).books,
+  getClubBooks: async (clubId: string, club?: { currentBookTitle?: string; currentBookAuthor?: string } | null) =>
+    withCurrentBook(await fetchClubBooks(clubId), club),
+  /** هل أنا مشارك في منافسة هذا الكتاب داخل هذا النادي؟ (يعيد معرّف الكتاب المحلي) */
+  getMyClubParticipation: (clubId: string): { bookKey: string; bookId: string }[] =>
+    getChallenges().filter(c => c.clubId === clubId && c.bookKey).map(c => ({ bookKey: c.bookKey!, bookId: c.bookId })),
+  /** يسجّل كتاب النادي الحالي في السجل (للمشرفين) إن لم يكن مسجَّلاً */
+  registerCurrentBook: async (clubId: string, club: { currentBookTitle?: string; currentBookAuthor?: string }) => {
+    if (!club.currentBookTitle) return;
+    const books = await fetchClubBooks(clubId);
+    if (books.some(b => b.key === makeBookKey(club.currentBookTitle!))) return;
+    await challengeService.addClubBook(clubId, club.currentBookTitle, club.currentBookAuthor || '');
+  },
+  getCachedClubBooks: (clubId: string, club?: { currentBookTitle?: string; currentBookAuthor?: string } | null): ClubBookEntry[] =>
+    withCurrentBook(readBooksCache(clubId).books, club),
   fetchClubBoards: (clubId: string, keys: string[]) => fetchClubBoards(clubId, keys),
 
   addClubBook: async (clubId: string, title: string, author: string): Promise<ClubBookEntry[]> => {
@@ -794,7 +857,7 @@ export const challengeService = {
   /** المنافسات في أنديتي التي تطابق كتابي (للانضمام بلا رمز) */
   getClubCompetitionsForBook: async (bookTitle: string) => {
     const clubs = (await challengeService.getMyClubs()).slice(0, 10);
-    const lists = await Promise.all(clubs.map(async c => ({ ...c, books: await fetchClubBooks(c.club._id) })));
+    const lists = await Promise.all(clubs.map(async c => ({ ...c, books: withCurrentBook(await fetchClubBooks(c.club._id), c.club) })));
     const out: { club: ReadingClub; canManage: boolean; entry: ClubBookEntry }[] = [];
     for (const c of lists) {
       const hit = c.books.find(b => titleMatches(b.title, bookTitle));
