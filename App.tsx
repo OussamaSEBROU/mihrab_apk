@@ -22,6 +22,7 @@ import { setupMobile, triggerHaptic } from './services/mobileService';
 import { communityService } from './services/communityService';
 import ReadingClubRoot from './components/ReadingClub/ReadingClubRoot';
 import ChallengeModal from './components/ChallengeModal';
+import BookSearch from './components/BookSearch';
 import {
   Menu, X, Plus, Clock, Star, BookOpen, Trash2, Globe, LayoutDashboard, Library,
   Check, Upload, Loader2, BookMarked, AlertTriangle,
@@ -1001,6 +1002,19 @@ const App: React.FC = () => {
               <button onClick={() => { setIsSidebarOpen(true); triggerHaptic(); }} className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl bg-black/60 backdrop-blur-xl border border-white/[0.08] hover:bg-red-600/90 hover:border-red-600/50 transition-all active:scale-90"><Menu size={16} className="text-white/80" /></button>
             </MotionDiv>
             <div className="flex flex-row items-center gap-1.5 md:gap-2 pointer-events-auto">
+              <BookSearch
+                lang={lang}
+                books={books}
+                shelves={shelves}
+                onHaptic={triggerHaptic}
+                onGoToBook={(b: Book) => {
+                  const list = books.filter(x => x.shelfId === b.shelfId);
+                  setShelfSwipeDirection('next');
+                  setActiveShelfId(b.shelfId);
+                  setActiveBookIndex(Math.max(0, list.findIndex(x => x.id === b.id)));
+                  triggerHaptic();
+                }}
+              />
               <button onClick={() => { setLang(lang === 'ar' ? 'en' : 'ar'); triggerHaptic(); }} className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center bg-black/60 backdrop-blur-xl border border-white/[0.08] rounded-xl text-white/50 hover:text-white hover:border-white/20 transition-all active:scale-90"><span className="text-[9px] font-black tracking-tight">{lang === 'ar' ? 'EN' : 'AR'}</span></button>
               <MotionDiv animate={{ opacity: isUiVisible ? 1 : 0, x: isUiVisible ? 0 : 10 }} className="flex items-center gap-2 bg-black/60 backdrop-blur-xl px-3 py-1.5 rounded-xl border border-red-500/20">
                 <Clock size={12} className="text-red-500" /><div className="flex flex-col leading-none"><span className="text-[6px] font-bold uppercase opacity-40 tracking-widest">{t.todayFocus}</span><span className="text-[10px] font-black text-white">{totalTodayMinutes}<span className="text-[7px] ml-0.5 opacity-40">{lang === 'ar' ? 'د' : 'm'}</span></span></div>
@@ -1132,6 +1146,7 @@ const App: React.FC = () => {
                   books={books}
                   onBack={() => { setView(ViewState.SHELF); setClubInviteToken(undefined); }}
                   inviteToken={clubInviteToken}
+                  onOpenReader={(b: Book) => { setSelectedBook(b); setView(ViewState.READER); setClubInviteToken(undefined); }}
                 />
               </MotionDiv>
             )}
