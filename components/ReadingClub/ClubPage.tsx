@@ -4,6 +4,8 @@ import { ArrowLeft, MessageSquare, Users, Quote, Flag, Share2, Settings, BookOpe
 import { ReadingClub, ClubUserProfile, ClubView } from '../../types/readingClub';
 import { clubInvitesAPI, clubMembersAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
+import ClubBooksSection from './ClubBooksSection';
+import { clubInviteCode } from '../../services/clubInviteCode';
 
 const MotionDiv = motion.div as any;
 
@@ -22,7 +24,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
   const isRTL = lang === 'ar';
   
   const [generatingInvite, setGeneratingInvite] = useState(false);
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteToken, setInviteToken] = useState<string | null>(() => clubInviteCode.get(club._id, club));
   const [copied, setCopied] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -36,10 +38,9 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
     
     setGeneratingInvite(true);
     try {
-      const response = await clubInvitesAPI.create(club._id);
-      if (response.ok && response.data) {
-        setInviteToken(response.data.token);
-      }
+      // رمز موحَّد لنفس النادي (نفس رمز إنشاء المنافسة)
+      const token = await clubInviteCode.ensure(club._id, club);
+      if (token) setInviteToken(token);
     } catch (err) {
       console.error('Failed to create invite:', err);
     } finally {
@@ -169,6 +170,11 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
               </div>
             )}
           </MotionDiv>
+        )}
+
+        {/* Challenge books (multi-book competitions inside the club) */}
+        {club.privacy !== 'personal' && (
+          <ClubBooksSection lang={lang} club={club} canManage={isOwner || isOwnerOrAdmin} books={books} />
         )}
 
         {/* Invite Section (Admins/Owners) */}
