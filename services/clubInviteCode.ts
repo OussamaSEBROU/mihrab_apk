@@ -32,6 +32,19 @@ export const clubInviteCode = {
     return null;
   },
 
+  /**
+   * يستخرج الرمز من أي صيغة لصقها المستخدم: الرمز وحده، أو رابط mihrab://club/invite/TOKEN،
+   * أو https://…/join/TOKEN. يعيد '' إن لم يوجد رمز (مثل رابط ناقص).
+   */
+  parse(input: string): string {
+    const raw = (input || '').trim();
+    if (!raw) return '';
+    const m = raw.match(/(?:invite|join)\/([A-Za-z0-9_-]{6,})/i);
+    if (m) return m[1];
+    if (/[:/]/.test(raw)) return '';           // رابط بلا رمز
+    return raw.replace(/\s+/g, '');
+  },
+
   /** رابط الدعوة الذي يحمل الرمز نفسه */
   link(token: string): string {
     return `${window.location.origin}/join/${token}`;
