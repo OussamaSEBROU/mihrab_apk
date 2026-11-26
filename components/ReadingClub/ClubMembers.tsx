@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, MoreVertical, Copy, Loader2, Check, X, Share2, L
 import { ReadingClub, ClubUserProfile, ClubMember, getMemberNickname, getMemberAvatar, getMemberId } from '../../types/readingClub';
 import { clubMembersAPI, clubInvitesAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
+import { clubInviteCode } from '../../services/clubInviteCode';
 
 const MotionDiv = motion.div as any;
 const AVATARS = ['📖','🌙','⭐','🔥','🌿','💎','🦋','🌸','🏔️','🌊','🎭','🕌'];
@@ -57,8 +58,9 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
   // ═══════════════════════════════════════════════════
   useEffect(() => {
     // Auto-load existing invite code from club data
-    if (club.inviteCode && !inviteToken) {
-      setInviteToken(club.inviteCode);
+    if (!inviteToken) {
+      const known = clubInviteCode.get(club._id, club);
+      if (known) setInviteToken(known);
     }
   }, [club.inviteCode]);
 
@@ -66,9 +68,10 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
     if (inviteToken) return;
     setGeneratingInvite(true);
     try {
-      const res = await clubInvitesAPI.create(club._id);
-      if (res.ok && res.data) {
-        setInviteToken(res.data.token);
+      // رمز موحَّد لنفس النادي (نفس رمز إنشاء المنافسة)
+      const token = await clubInviteCode.ensure(club._id, club);
+      if (token) {
+        setInviteToken(token);
       } else {
         showToast(isRTL ? 'فشل إنشاء الرابط' : 'Failed to generate link');
       }
@@ -131,6 +134,16 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
       const memRes = await clubMembersAPI.list(club._id);
       setMembers(memRes.data || []);
       showToast(isRTL ? 'تمت الترقية' : 'Promoted');
+    } catch (err) { console.error(err); }
+  };
+
+  const handleDemote = async (memberId: string) => {
+    try {
+      await clubMembersAPI.changeRole(club._id, memberId, 'member');
+      setActionMemberId(null);
+      const memRes = await clubMembersAPI.list(club._id);
+      setMembers(memRes.data || []);
+      showToast(isRTL ? 'تم إنهاء الإشراف' : 'Moderator removed');
     } catch (err) { console.error(err); }
   };
 
@@ -324,10 +337,17 @@ export default function ClubMembers({ lang, club, userProfile, isOwner, onBack }
                           <>
                             <div className="fixed inset-0 z-[100]" onClick={() => setActionMemberId(null)} />
                             <div className={`absolute ${isRTL ? 'left-0' : 'right-0'} mt-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-lg z-[101] overflow-hidden`}>
-                              <button onClick={() => handlePromote(memberId)}
-                                className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm`}>
-                                {isRTL ? 'ترقية لمشرف' : 'Promote to Admin'}
-                              </button>
+                              {['full_admin', 'content_admin', 'member_admin', 'discussion_mod', 'admin'].includes(member.role) ? (
+                                <button onClick={() => handleDemote(memberId)}
+                                  className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm text-amber-400`}>
+                                  {isRTL ? 'إنهاء الإشراف' : 'Remove as Admin'}
+                                </button>
+                              ) : (
+                                <button onClick={() => handlePromote(memberId)}
+                                  className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm`}>
+                                  {isRTL ? 'ترقية لمدير' : 'Promote to Admin'}
+                                </button>
+                              )}
                               <button onClick={() => handleMute(memberId)}
                                 className={`w-full ${isRTL ? 'text-right' : 'text-left'} px-4 py-2 hover:bg-gray-700 text-sm`}>
                                 {isRTL ? 'كتم (ساعة)' : 'Mute (1h)'}
