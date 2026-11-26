@@ -141,9 +141,20 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
                     <h2 className="text-base font-black text-white uppercase tracking-tight">
                       {isRTL ? 'لوحة الصدارة' : 'Leaderboard'}
                     </h2>
-                    <p className="text-[9px] font-bold text-amber-500/60 uppercase tracking-[0.2em] mt-0.5">
-                      {challenge.bookTitle}
-                    </p>
+                    {challenge.clubName ? (
+                      <>
+                        <p className="text-[11px] font-black text-amber-400 mt-0.5 max-w-[190px] truncate">
+                          {challenge.clubName}
+                        </p>
+                        <p className="text-[9px] font-bold text-amber-500/50 mt-0.5 max-w-[190px] truncate">
+                          {challenge.bookTitle}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-[9px] font-bold text-amber-500/60 uppercase tracking-[0.2em] mt-0.5">
+                        {challenge.bookTitle}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
