@@ -5,6 +5,7 @@ import { ReadingClub, ClubUserProfile } from '../../types/readingClub';
 import { clubGroupsAPI, clubBookAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
 import ClubBooksSection from './ClubBooksSection';
+import { challengeService } from '../../services/challengeService';
 
 const MotionDiv = motion.div as any;
 
@@ -127,7 +128,8 @@ export default function ClubSettings({ lang, club, userProfile, isOwner, books, 
     setDeleting(true);
     try {
       const res = await clubGroupsAPI.deleteGroup(club._id);
-      if (res.ok) {
+      if (res.ok || /not found|404/i.test(res.error || '')) {
+        challengeService.forgetClub(club._id);
         onClubDeleted();
       } else {
         setError(res.error || (isRTL ? 'فشل حذف النادي' : 'Failed to delete club'));
