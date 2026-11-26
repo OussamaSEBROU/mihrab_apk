@@ -16,6 +16,7 @@ import ClubStages from './ClubStages';
 import ClubMembers from './ClubMembers';
 import ClubInvitePreview from './ClubInvitePreview';
 import ClubSettings from './ClubSettings';
+import { challengeService } from '../../services/challengeService';
 
 const MotionDiv = motion.div as any;
 
@@ -189,6 +190,16 @@ export default function ReadingClubRoot({ lang, books, onBack, inviteToken, onOp
                 onSelectClub={(c) => { setSelectedClub(c); setView('page'); }} 
                 onRefresh={refreshClubs}
                 loading={loading}
+                onEditClub={(c) => { setSelectedClub(c); setView('settings'); }}
+                onDeleteClub={async (c) => {
+                  const res = await clubGroupsAPI.deleteGroup(c._id);
+                  if (res.ok || /not found|404/i.test(res.error || '')) {
+                    challengeService.forgetClub(c._id);
+                    setClubs(prev => prev.filter(x => x._id !== c._id));
+                    return true;
+                  }
+                  return false;
+                }}
                 onJoinWithToken={(token) => {
                   setInviteTokenState(token);
                   setView('invite-preview');
