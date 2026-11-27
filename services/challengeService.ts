@@ -154,16 +154,45 @@ export const entryMatches = (entry: { title: string; hash?: string }, title: str
 const isChallengeGroup = (g: { description?: string } | null | undefined) =>
   !!g && (g.description || '').startsWith('منافسة كتاب:');
 
+/** «منافسة كتاب: العنوان — المؤلف» ⇒ {title, author} (للمنافسات المستقلة التي لم يُحفظ كتابها في المجموعة) */
+export const parseChallengeDescription = (desc?: string): { title: string; author: string } | null => {
+  const d = (desc || '').trim();
+  if (!d.startsWith('منافسة كتاب:')) return null;
+  const rest = d.slice('منافسة كتاب:'.length).trim();
+  const i = rest.lastIndexOf(' — ');
+  const title = (i >= 0 ? rest.slice(0, i) : rest).trim();
+  const author = (i >= 0 ? rest.slice(i + 3) : '').trim();
+  return title ? { title, author } : null;
+};
+
 /** كتاب النادي «الحالي» (المختار عند الإنشاء) يُعدّ ضمن المنافسة ولو لم يُسجَّل في السجل بعد */
 function withCurrentBook(
   books: ClubBookEntry[],
-  club: { currentBookTitle?: string; currentBookAuthor?: string } | null | undefined
+  club: { currentBookTitle?: string; currentBookAuthor?: string; description?: string } | null | undefined
 ): ClubBookEntry[] {
-  const title = (club?.currentBookTitle || '').trim();
+  const parsed = parseChallengeDescription(club?.description);
+  const title = (club?.currentBookTitle || parsed?.title || '').trim();
   if (!title) return books;
+  const author = (club?.currentBookTitle ? club?.currentBookAuthor : (club?.currentBookAuthor || parsed?.author)) || '';
   const key = makeBookKey(title);
   if (books.some(b => b.key === key)) return books;
-  return [...books, { key, title, author: (club?.currentBookAuthor || '').trim() }];
+  return [...books, { key, title, author: author.trim() }];
+}
+
+/** توحيد تسمية كتابي مع تسمية المالك تلقائياً (للكتاب المطابق بالبصمة فقط) */
+function unifyBookName(bookId: string, entry: ClubBookEntry) {
+  try {
+    if (!entry.hash) return;
+    const lib: any = storageService.getBooks().find((b: any) => b.id === bookId);
+    if (!lib || lib.contentHash !== entry.hash) return;
+    const sameTitle = makeBookKey(lib.title) === entry.key;
+    const ownerAuthor = (entry.author || '').trim();
+    const sameAuthor = !ownerAuthor || (lib.author || '').trim() === ownerAuthor;
+    if (sameTitle && sameAuthor) return;
+    window.dispatchEvent(new CustomEvent('mihrab:rename-book', {
+      detail: { id: bookId, title: entry.title, author: ownerAuthor || undefined, silent: true },
+    }));
+  } catch { /* noop */ }
 }
 
 function parseBooksSnapshot(body: string): ClubBooksSnapshotMessage | null {
@@ -333,7 +362,7 @@ function fetchClubBoards(clubId: string, keys: string[]): Promise<Record<string,
 }
 
 function buildClubChallenge(
-  club: { _id: string; name: string },
+  club: { _id: string; name: string; description?: string },
   entry: ClubBookEntry,
   identity: ChallengeIdentity,
   bookId: string,
@@ -364,6 +393,8 @@ function buildClubChallenge(
     clubId: club._id,
     clubName: club.name,
     bookKey: entry.key,
+    // منافسة مستقلة رُقّيت لنادٍ: كتابها الأصلي يقبل رسائل التقدّم القديمة بلا مفتاح
+    ...((() => { const p = parseChallengeDescription(club.description); return p && makeBookKey(p.title) === entry.key ? { acceptUnkeyed: true } : {}; })()),
   };
 }
 
@@ -421,6 +452,7 @@ export const challengeService = {
         currentBookId: bookId,
         currentBookTitle: bookTitle,
         currentBookAuthor: bookAuthor,
+        bookVisibleToMembers: true,
       });
 
       if (!groupResult.ok || !groupResult.data) {
@@ -605,6 +637,7 @@ export const challengeService = {
         lastSyncedAt: Date.now(),
         ...(clubBook ? { clubId: group._id, clubName: group.name, bookKey: clubBook.key } : {}),
       };
+      if (clubBook) unifyBookName(bookId, clubBook);
       if (clubBook) clubInviteCode.set(group._id, inviteToken);
 
       const challenges = getChallenges();
@@ -728,7 +761,11 @@ export const challengeService = {
         const progress = isProgressMessage(msg.body || '');
         if (!progress) continue;
         // داخل نادي: لكل كتاب منافسته الخاصة
-        if (challenge.clubId && progress.bookKey !== challenge.bookKey) continue;
+        if (challenge.clubId) {
+          if (progress.bookKey !== challenge.bookKey && !(challenge.acceptUnkeyed && !progress.bookKey)) continue;
+        } else if (progress.bookKey && progress.bookKey !== makeBookKey(challenge.bookTitle)) {
+          continue;   // منافسة مستقلة: نتجاهل تقدّم كتب أخرى أُضيفت لاحقاً للمجموعة نفسها
+        }
 
         const authorId = typeof msg.authorId === 'object' ? msg.authorId._id : msg.authorId;
         // انسحاب: لا يدخل في المنحنى ولا اللوحة (ما لم تأتِ بعده رسالة تقدّم أحدث)
@@ -879,19 +916,21 @@ export const challengeService = {
     } catch {}
   },
 
-  getClubBooks: async (clubId: string, club?: { currentBookTitle?: string; currentBookAuthor?: string } | null) =>
+  getClubBooks: async (clubId: string, club?: { currentBookTitle?: string; currentBookAuthor?: string; description?: string } | null) =>
     withCurrentBook(await fetchClubBooks(clubId), club),
   /** هل أنا مشارك في منافسة هذا الكتاب داخل هذا النادي؟ (يعيد معرّف الكتاب المحلي) */
   getMyClubParticipation: (clubId: string): { bookKey: string; bookId: string }[] =>
     getChallenges().filter(c => c.clubId === clubId && c.bookKey).map(c => ({ bookKey: c.bookKey!, bookId: c.bookId })),
   /** يسجّل كتاب النادي الحالي في السجل (للمشرفين) إن لم يكن مسجَّلاً */
-  registerCurrentBook: async (clubId: string, club: { currentBookTitle?: string; currentBookAuthor?: string }) => {
-    if (!club.currentBookTitle) return;
+  registerCurrentBook: async (clubId: string, club: { currentBookTitle?: string; currentBookAuthor?: string; description?: string }) => {
+    const parsed = parseChallengeDescription(club.description);
+    const title = club.currentBookTitle || parsed?.title;
+    if (!title) return;
     const books = await fetchClubBooks(clubId);
-    if (books.some(b => b.key === makeBookKey(club.currentBookTitle!))) return;
-    await challengeService.addClubBook(clubId, club.currentBookTitle, club.currentBookAuthor || '');
+    if (books.some(b => b.key === makeBookKey(title))) return;
+    await challengeService.addClubBook(clubId, title, club.currentBookAuthor || parsed?.author || '');
   },
-  getCachedClubBooks: (clubId: string, club?: { currentBookTitle?: string; currentBookAuthor?: string } | null): ClubBookEntry[] =>
+  getCachedClubBooks: (clubId: string, club?: { currentBookTitle?: string; currentBookAuthor?: string; description?: string } | null): ClubBookEntry[] =>
     withCurrentBook(readBooksCache(clubId).books, club),
   fetchClubBoards: (clubId: string, keys: string[]) => fetchClubBoards(clubId, keys),
 
@@ -1005,7 +1044,7 @@ export const challengeService = {
   /** المشاركة في كتاب مسجَّل في نادٍ أنا عضو فيه (بلا رمز) */
   joinClubBook: (
     identity: ChallengeIdentity,
-    club: { _id: string; name: string; inviteCode?: string },
+    club: { _id: string; name: string; inviteCode?: string; description?: string },
     entry: ClubBookEntry,
     bookId: string,
     bookTitle: string,
@@ -1023,6 +1062,7 @@ export const challengeService = {
       const token = clubInviteCode.get(club._id, club) || '';
       const challenge = buildClubChallenge(club, entry, identity, bookId, bookTitle, bookAuthor, token, isManager);
       saveChallenges([...getChallenges().filter(c => c.bookId !== bookId), challenge]);
+      unifyBookName(bookId, entry);
       Promise.resolve(clubMessagesAPI.send(club._id, {
         body: buildProgressPayload(identity, 0, 0, 0, 0, entry.key),
         type: 'announcement',
