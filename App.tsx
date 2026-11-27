@@ -24,12 +24,13 @@ import ReadingClubRoot from './components/ReadingClub/ReadingClubRoot';
 import ChallengeModal from './components/ChallengeModal';
 import BookSearch from './components/BookSearch';
 import StorageFullDialog from './components/StorageFullDialog';
+import RenameDialog from './components/RenameDialog';
 import { ensureSpace, isQuotaError, reportStorageFull, installGlobalStorageGuard } from './services/storageGuard';
 import {
   Menu, X, Plus, Clock, Star, BookOpen, Trash2, Globe, LayoutDashboard, Library,
   Check, Upload, Loader2, BookMarked, AlertTriangle,
   ShieldCheck, BrainCircuit, Send, Zap, Sparkles, Download, Share2, FileJson, Timer,
-  Users, Trophy
+  Users, Trophy, Pencil
 } from 'lucide-react';
 // Global safety check for pdfjsLib to prevent initialization crashes if CDN fails to load
 if (typeof pdfjsLib !== 'undefined') {
@@ -199,6 +200,7 @@ const App: React.FC = () => {
   const [showInsights, setShowInsights] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ kind: 'book' | 'shelf'; id: string; value: string } | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [showChallengeModal, setShowChallengeModal] = useState(false);
   const [challengeBook, setChallengeBook] = useState<Book | null>(null);
@@ -588,6 +590,28 @@ const App: React.FC = () => {
       setIsExtracting(false);
     }
   };
+  const applyBookRename = (id: string, title: string) => {
+    const t = (title || '').trim();
+    if (!t) return;
+    const updated = books.map(b => b.id === id ? { ...b, title: t } : b);
+    setBooks(updated);
+    storageService.saveBooks(updated);
+  };
+  const applyShelfRename = (id: string, name: string) => {
+    const n = (name || '').trim();
+    if (!n) return;
+    const updated = shelves.map(s => s.id === id ? { ...s, name: n } : s);
+    setShelves(updated);
+    storageService.saveShelves(updated);
+  };
+  // إعادة التسمية القادمة من صفحة النادي (تنبيه «سمِّ كتابك باسم المالك»)
+  const renameFromClubRef = useRef<(id: string, title: string) => void>(() => {});
+  renameFromClubRef.current = applyBookRename;
+  useEffect(() => {
+    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (d?.id && d?.title) renameFromClubRef.current(d.id, d.title); };
+    window.addEventListener('mihrab:rename-book', h);
+    return () => window.removeEventListener('mihrab:rename-book', h);
+  }, []);
   const handleAddShelf = () => {
     if (!newShelfName) return;
     const newShelf: ShelfData = { id: Math.random().toString(36).substr(2, 9), name: newShelfName, color: '#ff0000' };
@@ -963,6 +987,13 @@ const App: React.FC = () => {
                           >
                             <Download size={12} />
                           </button>
+                          <button
+                            onClick={(e: any) => { e.stopPropagation(); setRenameTarget({ kind: 'shelf', id: shelf.id, value: shelf.name }); }}
+                            className="p-1.5 text-white/30 hover:text-amber-400 transition-colors active:scale-90"
+                            title={lang === 'ar' ? 'تعديل اسم الرف' : 'Rename shelf'}
+                          >
+                            <Pencil size={12} />
+                          </button>
                           {shelf.id !== 'default' && (
                             <button 
                               onClick={(e: any) => handleDeleteShelf(e, shelf)} 
@@ -1114,6 +1145,7 @@ const App: React.FC = () => {
                           onAddBook={() => setIsAddingBook(true)} 
                           onAddShelf={() => setIsAddingShelf(true)}
                           onDeleteBook={(b: Book) => setBookToDelete(b)}
+                          onEditBook={(b: Book) => setRenameTarget({ kind: 'book', id: b.id, value: b.title })}
                           onExportBook={handleExportBook}
                           onChallengeBook={(b: Book) => { setChallengeBook(b); setShowChallengeModal(true); }}
                           onShelfSwipe={handleShelfSwipe}
@@ -1623,6 +1655,15 @@ const App: React.FC = () => {
             </MotionDiv>
           )}
           <StorageFullDialog lang={lang as any} />
+          {renameTarget && (
+            <RenameDialog
+              lang={lang as any}
+              heading={renameTarget.kind === 'book' ? (lang === 'ar' ? 'تعديل اسم الكتاب' : 'Rename book') : (lang === 'ar' ? 'تعديل اسم الرف' : 'Rename shelf')}
+              initial={renameTarget.value}
+              onClose={() => setRenameTarget(null)}
+              onSave={(v) => { if (renameTarget.kind === 'book') applyBookRename(renameTarget.id, v); else applyShelfRename(renameTarget.id, v); setRenameTarget(null); }}
+            />
+          )}
           {celebrationStar && <CelebrationOverlay starCount={celebrationStar} lang={lang} onComplete={handleCelebrationComplete} />}
           {/* ── CHALLENGE MODAL ── */}
           <AnimatePresence>
