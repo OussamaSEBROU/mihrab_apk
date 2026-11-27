@@ -5,7 +5,7 @@ import { ReadingClub, ClubUserProfile, ClubView } from '../../types/readingClub'
 import { clubInvitesAPI, clubMembersAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
 import ClubBooksSection from './ClubBooksSection';
-import { titleMatches, challengeService } from '../../services/challengeService';
+import { titleMatches, challengeService, parseChallengeDescription } from '../../services/challengeService';
 import { clubInviteCode } from '../../services/clubInviteCode';
 
 const MotionDiv = motion.div as any;
@@ -78,12 +78,15 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
     }
   };
 
+  const parsedDesc = parseChallengeDescription(club.description);
+  const curTitle = club.currentBookTitle || parsedDesc?.title || '';
+  const curAuthor = club.currentBookTitle ? club.currentBookAuthor : (club.currentBookAuthor || parsedDesc?.author || '');
   const [bookMissing, setBookMissing] = useState(false);
   const handleOpenBook = () => {
     if (!books || !onOpenReader) return;
     // نطابق بالمعرّف ثم بالعنوان (معرّف الملف يختلف من جهاز لآخر)
-    const curEntry = challengeService.getCachedClubBooks(club._id, club).find(e => club.currentBookTitle && titleMatches(e.title, club.currentBookTitle));
-    const byTitle = books.filter(b => club.currentBookTitle && titleMatches(b.title, club.currentBookTitle));
+    const curEntry = challengeService.getCachedClubBooks(club._id, club).find(e => curTitle && titleMatches(e.title, curTitle));
+    const byTitle = books.filter(b => curTitle && titleMatches(b.title, curTitle));
     const book =
       books.find(b => club.currentBookId && (b.id === club.currentBookId || b._id === club.currentBookId)) ||
       // لمدخل له بصمة: نطابق بها فقط؛ وإلا بالاسم إن كان مرشّحاً وحيداً (لا نخمّن بين كتابين متشابهين)
@@ -140,7 +143,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
         </MotionDiv>
 
         {/* Current Book */}
-        {club.currentBookTitle && club.bookVisibleToMembers !== false && (
+        {curTitle && (club.bookVisibleToMembers !== false || !!parsedDesc) && (
           <MotionDiv
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -159,9 +162,9 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1">
                   {lang === 'ar' ? 'نقرأ الآن' : 'CURRENTLY READING'}
                 </p>
-                <h3 className="font-bold text-sm line-clamp-2">{club.currentBookTitle}</h3>
-                {club.currentBookAuthor && (
-                  <p className="text-xs text-gray-500 mt-1">{club.currentBookAuthor}</p>
+                <h3 className="font-bold text-sm line-clamp-2">{curTitle}</h3>
+                {curAuthor && (
+                  <p className="text-xs text-gray-500 mt-1">{curAuthor}</p>
                 )}
               </div>
               {books && onOpenReader && (
