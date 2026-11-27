@@ -616,12 +616,12 @@ const App: React.FC = () => {
     storageService.saveShelves(updated);
   };
   // إعادة التسمية القادمة من صفحة النادي (تنبيه «سمِّ كتابك باسم المالك»)
-  const renameFromClubRef = useRef<(id: string, title: string) => boolean>(() => false);
-  renameFromClubRef.current = (id, title) => applyBookRename(id, title);
+  const renameFromClubRef = useRef<(id: string, title: string, author?: string) => boolean>(() => false);
+  renameFromClubRef.current = (id, title, author) => applyBookRename(id, title, author);
   const dupMsgRef = useRef<() => string>(() => '');
   dupMsgRef.current = dupMessage;
   useEffect(() => {
-    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (d?.id && d?.title) { if (!renameFromClubRef.current(d.id, d.title)) alert(dupMsgRef.current()); } };
+    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (d?.id && d?.title) { if (!renameFromClubRef.current(d.id, d.title, d.author) && !d.silent) alert(dupMsgRef.current()); } };
     window.addEventListener('mihrab:rename-book', h);
     return () => window.removeEventListener('mihrab:rename-book', h);
   }, []);
