@@ -49,6 +49,7 @@ export interface BookChallenge {
   clubId?: string;               // معرّف النادي (= id)
   clubName?: string;
   bookKey?: string;              // مفتاح الكتاب داخل النادي (من العنوان)
+  acceptUnkeyed?: boolean;       // يقبل رسائل تقدّم قديمة بلا مفتاح كتاب (منافسة مستقلة رُقّيت لنادٍ)
 }
 
 // كتاب مسجَّل للمنافسة داخل نادي
@@ -56,6 +57,7 @@ export interface ClubBookEntry {
   key: string;
   title: string;
   author: string;
+  hash?: string;   // بصمة محتوى ملف الكتاب (SHA-256) — تُعرِّف الكتاب مهما اختلف اسمه
 }
 
 // لقطة سجل كتب النادي (تُرسل كرسالة نظام داخل مجموعة النادي)
