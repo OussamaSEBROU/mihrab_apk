@@ -4,7 +4,7 @@
 // • كل عضو: فتح الكتاب من مكتبته، الانضمام لمنافسته، أو الانسحاب منها بشكل مستقل لكل كتاب
 // ══════════════════════════════════════════════════════════════
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { BookOpen, Plus, Pencil, Trash2, Trophy, Loader2, ChevronDown, X, LogIn, LogOut, ExternalLink } from 'lucide-react';
 import type { ReadingClub } from '../../types/readingClub';
 import type { ClubBookEntry, ChallengeParticipant } from '../../types/challenge';
@@ -23,7 +23,6 @@ interface Props {
 
 export default function ClubBooksSection({ lang, club, canManage, books, onOpenBook }: Props) {
   const isRTL = lang === 'ar';
-  const isChallengeGroup = (club.description || '').startsWith('منافسة كتاب:');
 
   const [entries, setEntries] = useState<ClubBookEntry[]>(() => challengeService.getCachedClubBooks(club._id, club));
   const [boards, setBoards] = useState<Record<string, ChallengeParticipant[]>>({});
@@ -64,9 +63,7 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
     } finally { setLoading(false); }
   }, [club, canManage, books]);
 
-  useEffect(() => { if (!isChallengeGroup) load(); else setLoading(false); }, [load, isChallengeGroup]);
-
-  if (isChallengeGroup) return null;
+  useEffect(() => { load(); }, [load]);
   void pickTick;
 
   const library = (books || []).filter(b => b && b.title);
@@ -94,7 +91,7 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
     setPickTick(x => x + 1);
   };
   const renameToOwner = (lib: any, e: ClubBookEntry) => {
-    try { window.dispatchEvent(new CustomEvent('mihrab:rename-book', { detail: { id: lib.id, title: e.title } })); } catch { /* noop */ }
+    try { window.dispatchEvent(new CustomEvent('mihrab:rename-book', { detail: { id: lib.id, title: e.title, author: (e.author || '').trim() || undefined } })); } catch { /* noop */ }
     flash(isRTL ? 'تمت إعادة تسمية كتابك' : 'Book renamed');
   };
   const participation = (e: ClubBookEntry) => mine.find(m => m.bookKey === e.key);
@@ -118,6 +115,21 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
       setEntries(await challengeService.getClubBooks(club._id, club));
     } finally { setBusy(false); setConfirmKey(null); }
   };
+
+  // توحيد التسمية تلقائياً: كتابي مطابق بالبصمة لكتاب أشارك فيه لكن اسمه مختلف عن اسم المالك
+  const unifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const e of entries) {
+      if (!e.hash || !mine.some(m => m.bookKey === e.key) || unifiedRef.current.has(e.key)) continue;
+      const lb = library.find(b => b.contentHash && b.contentHash === e.hash);
+      if (!lb) continue;
+      unifiedRef.current.add(e.key);
+      const ownerAuthor = (e.author || '').trim();
+      if (makeBookKey(lb.title) === e.key && (!ownerAuthor || (lb.author || '').trim() === ownerAuthor)) continue;
+      try { window.dispatchEvent(new CustomEvent('mihrab:rename-book', { detail: { id: lb.id, title: e.title, author: ownerAuthor || undefined, silent: true } })); } catch { /* noop */ }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, mine, books]);
 
   const handleJoin = async (e: ClubBookEntry) => {
     const lib = findLibraryBook(e);
