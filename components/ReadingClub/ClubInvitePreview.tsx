@@ -110,7 +110,7 @@ export default function ClubInvitePreview({ lang, inviteToken, userProfile, onJo
               {preview.group?.avatarUrl && (
                 <img src={preview.group.avatarUrl} alt="Club Avatar" className="w-20 h-20 rounded-full mx-auto mb-4 border-2 border-red-600/50 object-cover" />
               )}
-              <h1 className="text-2xl font-black uppercase tracking-widest mb-2">{preview.group?.name || ''}</h1>
+              <h1 className="font-black mb-2 px-2" style={{ fontSize: 20, lineHeight: 1.4, letterSpacing: 0, wordBreak: 'break-word' }}>{preview.group?.name || ''}</h1>
               {preview.group?.description && <p className="text-gray-400 text-sm">{preview.group?.description}</p>}
             </div>
 
