@@ -37,6 +37,8 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
   const [confirmLeave, setConfirmLeave] = useState<string | null>(null);
   const [mine, setMine] = useState(() => challengeService.getMyClubParticipation(club._id));
   const [note, setNote] = useState('');
+  const [pickTick, setPickTick] = useState(0);
+  const [addPickId, setAddPickId] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -47,7 +49,13 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
       if (canManage) {
         const ups = list
           .filter(e => !e.hash)
-          .map(e => { const lb = (books || []).find((x: any) => x?.contentHash && x.title && titleMatches(x.title, e.title)); return lb ? { key: e.key, hash: lb.contentHash as string } : null; })
+          .map(e => {
+            // لا نُلحق بصمة إلا إن كان المرشّح الوحيد (اسم مكرر في المكتبة = غموض يُحسم يدوياً)
+            const cands = (books || []).filter((x: any) => x?.contentHash && x.title && titleMatches(x.title, e.title)
+              && !list.some(o => o.key !== e.key && o.hash === x.contentHash));
+            const all = (books || []).filter((x: any) => x?.title && titleMatches(x.title, e.title));
+            return cands.length === 1 && all.length === 1 ? { key: e.key, hash: cands[0].contentHash as string } : null;
+          })
           .filter(Boolean) as { key: string; hash: string }[];
         if (ups.length) challengeService.setClubBookHashes(club._id, ups).then(() => challengeService.getClubBooks(club._id, club)).then(setEntries).catch(() => {});
       }
@@ -59,9 +67,32 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
   useEffect(() => { if (!isChallengeGroup) load(); else setLoading(false); }, [load, isChallengeGroup]);
 
   if (isChallengeGroup) return null;
+  void pickTick;
 
   const library = (books || []).filter(b => b && b.title);
-  const findLibraryBook = (e: ClubBookEntry) => library.find(b => entryMatches(e, b.title, b.contentHash));
+  const pickKey = (e: ClubBookEntry) => `sanctuary_club_pick_${club._id}_${e.key}`;
+  const pickedId = (e: ClubBookEntry): string => { try { return localStorage.getItem(pickKey(e)) || ''; } catch { return ''; } };
+  const candidatesFor = (e: ClubBookEntry) =>
+    library.filter(b => titleMatches(b.title, e.title) && !entries.some(o => o.key !== e.key && o.hash && o.hash === b.contentHash));
+  /** مدخل قديم بلا بصمة وأكثر من كتاب بالاسم نفسه عندي: على المستخدم تحديد نسخته */
+  const isAmbiguous = (e: ClubBookEntry) => !e.hash && !pickedId(e) && candidatesFor(e).length > 1;
+  const findLibraryBook = (e: ClubBookEntry) => {
+    const pid = pickedId(e);
+    if (pid) { const pb = library.find(b => String(b.id) === pid); if (pb) return pb; }
+    const exact = library.find(b => b.contentHash && e.hash && b.contentHash === e.hash);
+    if (exact) return exact;
+    if (e.hash) return undefined;                      // له بصمة ولم تطابق أيّ كتاب عندي ⇒ ليس عندي
+    const c = candidatesFor(e);
+    return c.length === 1 ? c[0] : undefined;
+  };
+  const choosePick = (e: ClubBookEntry, id: string) => {
+    try { localStorage.setItem(pickKey(e), id); } catch { /* noop */ }
+    const lb = library.find(b => String(b.id) === id);
+    if (canManage && lb?.contentHash) {
+      challengeService.setClubBookHashes(club._id, [{ key: e.key, hash: lb.contentHash }]).then(() => challengeService.getClubBooks(club._id, club)).then(setEntries).catch(() => {});
+    }
+    setPickTick(x => x + 1);
+  };
   const renameToOwner = (lib: any, e: ClubBookEntry) => {
     try { window.dispatchEvent(new CustomEvent('mihrab:rename-book', { detail: { id: lib.id, title: e.title } })); } catch { /* noop */ }
     flash(isRTL ? 'تمت إعادة تسمية كتابك' : 'Book renamed');
@@ -73,7 +104,7 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
     if (!title.trim()) return;
     setBusy(true);
     try {
-      const picked = library.find(x => x.title === title.trim() || x.title === title);
+      const picked = library.find(x => String(x.id) === addPickId && x.title === title);
       await challengeService.addClubBook(club._id, title, author, picked?.contentHash);
       setEntries(await challengeService.getClubBooks(club._id, club));
       setTitle(''); setAuthor(''); setAdding(false);
@@ -144,7 +175,7 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
               defaultValue=""
               onChange={e => {
                 const b = library.find(x => String(x.id) === e.target.value);
-                if (b) { setTitle(b.title || ''); setAuthor(b.author || ''); }
+                if (b) { setTitle(b.title || ''); setAuthor(b.author || ''); setAddPickId(String(b.id)); } else setAddPickId('');
               }}
               className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white font-bold"
             >
@@ -252,6 +283,18 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
                     )
                   )}
                 </div>
+                {isAmbiguous(b) && (
+                  <div className="px-3 py-2 border-t border-sky-600/25 bg-sky-600/10 space-y-1.5">
+                    <p className="text-[10px] font-bold text-sky-300 leading-relaxed">
+                      {isRTL ? 'في مكتبتك أكثر من كتاب بهذا الاسم. اختر أيّها هو كتاب هذه المنافسة:' : 'Several books in your library share this name. Pick the one for this challenge:'}
+                    </p>
+                    <select defaultValue="" onChange={ev => ev.target.value && choosePick(b, ev.target.value)}
+                      className="w-full bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-bold">
+                      <option value="" className="bg-black">{isRTL ? 'اختر النسخة…' : 'Choose copy…'}</option>
+                      {candidatesFor(b).map(x => <option key={x.id} value={String(x.id)} className="bg-black">{x.title}{x.author ? ` — ${x.author}` : ''} · {String(x.contentHash || x.id).slice(-6)}</option>)}
+                    </select>
+                  </div>
+                )}
                 {lib && makeBookKey(lib.title) !== b.key && (
                   <div className="flex items-center gap-2 px-3 py-2 border-t border-amber-600/20 bg-amber-600/10">
                     <span className="flex-1 min-w-0 text-[10px] font-bold text-amber-300 leading-relaxed">
