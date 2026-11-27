@@ -23,6 +23,8 @@ import { communityService } from './services/communityService';
 import ReadingClubRoot from './components/ReadingClub/ReadingClubRoot';
 import ChallengeModal from './components/ChallengeModal';
 import BookSearch from './components/BookSearch';
+import StorageFullDialog from './components/StorageFullDialog';
+import { ensureSpace, isQuotaError, reportStorageFull, installGlobalStorageGuard } from './services/storageGuard';
 import {
   Menu, X, Plus, Clock, Star, BookOpen, Trash2, Globe, LayoutDashboard, Library,
   Check, Upload, Loader2, BookMarked, AlertTriangle,
@@ -142,6 +144,8 @@ const App: React.FC = () => {
   const [clubInviteToken, setClubInviteToken] = useState<string | undefined>(undefined);
 
   // ===== DEEP LINK LISTENER FOR CLUB INVITES =====
+  useEffect(() => { installGlobalStorageGuard(); }, []);
+
   useEffect(() => {
     try {
       import('@capacitor/app').then(({ App: CapApp }) => {
@@ -532,7 +536,10 @@ const App: React.FC = () => {
       }
       return;
     }
+    // ── فحص استباقي للمساحة: PDF في IndexedDB + نسخة احتياطية في الملفات (≈ ضعف الحجم) ──
+    if (!(await ensureSpace(pendingFileData.byteLength * 2, 'add-book', () => { handleAddBook(); }))) return;
     setIsExtracting(true);
+    let savedBookId: string | null = null;
     try {
       // ── SHA-256: حساب البصمة الرقمية الثابتة للملف ──
       const contentHash = await computeFileHash(pendingFileData);
@@ -551,6 +558,7 @@ const App: React.FC = () => {
       const bookId = `book_${contentHash.substring(0, 12)}`;
       // حفظ الـ PDF في IDB + نسخة احتياطية في Filesystem
       const bufferForStorage = pendingFileData.slice(0);
+      savedBookId = bookId;
       await pdfStorage.saveFile(bookId, bufferForStorage);
       // الغلاف: إما جاهز من الخلفية، أو placeholder إذا لم يكتمل بعد
       const coverUrl = pendingCoverUrl || generateStyledCover(bookId, newBookTitle);
@@ -569,6 +577,12 @@ const App: React.FC = () => {
       setNewBookTitle(''); setNewBookAuthor(''); setPendingFileData(null); setPendingCoverUrl(null); setIsAddingBook(false);
     } catch (err) {
       console.error('Book addition failed:', err);
+      if (savedBookId) pdfStorage.deleteFile(savedBookId).catch(() => {});   // تراجع عن الكتابة الجزئية
+      if (isQuotaError(err)) {
+        // نُبقي بيانات النموذج كما هي ليكمل المستخدم بعد التفريغ بضغطة واحدة
+        reportStorageFull({ context: 'add-book', retry: () => { handleAddBook(); } });
+        return;
+      }
       alert(lang === 'ar' ? 'حدث خطأ أثناء رفع الكتاب. حاول مجدداً.' : 'Error uploading book. Please try again.');
     } finally {
       setIsExtracting(false);
@@ -1608,6 +1622,7 @@ const App: React.FC = () => {
               </MotionDiv>
             </MotionDiv>
           )}
+          <StorageFullDialog lang={lang as any} />
           {celebrationStar && <CelebrationOverlay starCount={celebrationStar} lang={lang} onComplete={handleCelebrationComplete} />}
           {/* ── CHALLENGE MODAL ── */}
           <AnimatePresence>
