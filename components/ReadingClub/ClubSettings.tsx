@@ -27,6 +27,7 @@ export default function ClubSettings({ lang, club, userProfile, isOwner, books, 
   const [name, setName] = useState(club.name || '');
   const [description, setDescription] = useState(club.description || '');
   const [joinApprovalRequired, setJoinApprovalRequired] = useState(club.joinApprovalRequired ?? true);
+  const [privacy, setPrivacy] = useState<'private' | 'public' | 'personal'>((club.privacy as any) || 'private');
   const [maxMembers, setMaxMembers] = useState(club.maxMembers || 70);
   const [bookVisible, setBookVisible] = useState(club.bookVisibleToMembers ?? true);
   const [bookReadable, setBookReadable] = useState(club.bookReadableByMembers ?? true);
@@ -44,6 +45,7 @@ export default function ClubSettings({ lang, club, userProfile, isOwner, books, 
     description !== (club.description || '') ||
     joinApprovalRequired !== (club.joinApprovalRequired ?? true) ||
     maxMembers !== (club.maxMembers || 70) ||
+    privacy !== ((club.privacy as any) || 'private') ||
     bookVisible !== (club.bookVisibleToMembers ?? true) ||
     bookReadable !== (club.bookReadableByMembers ?? true);
 
@@ -63,11 +65,20 @@ export default function ClubSettings({ lang, club, userProfile, isOwner, books, 
         maxMembers,
         bookVisibleToMembers: bookVisible,
         bookReadableByMembers: bookReadable,
+        ...(isOwner && privacy !== ((club.privacy as any) || 'private') ? { privacy } : {}),
       } as any);
       if (res.ok && res.data) {
-        onClubUpdated(res.data);
-        setSuccess(isRTL ? 'تم حفظ التغييرات' : 'Changes saved');
-        setTimeout(() => setSuccess(''), 3000);
+        const privacyWanted = isOwner ? privacy : undefined;
+        // بعض الخوادم تتجاهل تغيير الخصوصية بصمت: لا نعرض نجاحاً كاذباً
+        const privacyIgnored = privacyWanted && privacyWanted !== ((club.privacy as any) || 'private') && (res.data as any).privacy && (res.data as any).privacy !== privacyWanted;
+        onClubUpdated(privacyIgnored ? ({ ...res.data, privacy: club.privacy } as any) : res.data);
+        if (privacyIgnored) {
+          setPrivacy((club.privacy as any) || 'private');
+          setError(isRTL ? 'حُفظت بقية التغييرات، لكن الخادم لم يقبل تغيير الخصوصية' : 'Other changes saved, but the server did not accept the privacy change');
+        } else {
+          setSuccess(isRTL ? 'تم حفظ التغييرات' : 'Changes saved');
+          setTimeout(() => setSuccess(''), 3000);
+        }
       } else {
         setError(res.error || (isRTL ? 'فشل حفظ التغييرات' : 'Failed to save'));
       }
@@ -197,16 +208,38 @@ export default function ClubSettings({ lang, club, userProfile, isOwner, books, 
           />
         </div>
 
-        {/* Privacy (read-only) */}
+        {/* Privacy (editable by owner) */}
         <div>
           <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
             {isRTL ? 'الخصوصية' : 'PRIVACY'}
           </label>
-          <div className="bg-black/50 border border-white/10 rounded-lg py-3 px-4 text-gray-400 text-sm">
-            {club.privacy === 'private' ? (isRTL ? '🔒 خاص — بالدعوة فقط' : '🔒 Private — Invite only') :
-             club.privacy === 'public' ? (isRTL ? '🌐 عام — أي شخص يمكنه الانضمام' : '🌐 Public — Anyone can join') :
-             (isRTL ? '👤 شخصي' : '👤 Personal')}
-          </div>
+          {isOwner ? (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { id: 'private', icon: '🔒', ar: 'خاص', en: 'Private' },
+                  { id: 'public', icon: '🌐', ar: 'عام', en: 'Public' },
+                  { id: 'personal', icon: '👤', ar: 'شخصي', en: 'Personal' },
+                ] as const).map(o => (
+                  <button key={o.id} type="button" onClick={() => setPrivacy(o.id)}
+                    className={`py-3 rounded-xl border text-xs font-black transition-colors ${privacy === o.id ? 'bg-red-900/20 border-red-500 text-white' : 'bg-black/30 border-white/10 text-gray-500 hover:border-white/30'}`}>
+                    <span className="block text-base mb-0.5">{o.icon}</span>{isRTL ? o.ar : o.en}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                {privacy === 'private' && (isRTL ? 'مخفي عن العامة. بالدعوة فقط.' : 'Hidden from public. Invite only.')}
+                {privacy === 'public' && (isRTL ? 'مرئي للجميع. يمكن لأي شخص طلب الانضمام.' : 'Visible to all. Anyone can request to join.')}
+                {privacy === 'personal' && (isRTL ? 'للاستخدام الشخصي. لا تُعرض الدعوات ولا المنافسات الجماعية.' : 'Personal use. Invites and group competitions are hidden.')}
+              </p>
+            </>
+          ) : (
+            <div className="bg-black/50 border border-white/10 rounded-lg py-3 px-4 text-gray-400 text-sm">
+              {club.privacy === 'private' ? (isRTL ? '🔒 خاص — بالدعوة فقط' : '🔒 Private — Invite only') :
+               club.privacy === 'public' ? (isRTL ? '🌐 عام — أي شخص يمكنه الانضمام' : '🌐 Public — Anyone can join') :
+               (isRTL ? '👤 شخصي' : '👤 Personal')}
+            </div>
+          )}
         </div>
 
         {/* Join Approval Toggle */}
