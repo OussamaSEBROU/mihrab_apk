@@ -138,7 +138,7 @@ const MessageBubble = React.memo<BubbleProps>(({
       onTouchMove={onTouchMove}
       onContextMenu={e => onContextMenu(msg, e)}
     >
-      <div className={`max-w-[85%] rounded-2xl p-3 transition-all duration-500 ${
+      <div className={`max-w-[85%] rounded-2xl px-3 py-2 transition-all duration-500 ${
         isMe ? 'bg-red-900/30 border border-red-600/30' : 'bg-gray-900 border border-gray-800'
       } ${highlighted ? 'ring-2 ring-red-500/50 bg-red-900/40' : ''} ${
         msg._failed ? 'border-red-500/50 opacity-70' : ''
@@ -200,14 +200,14 @@ const MessageBubble = React.memo<BubbleProps>(({
           </div>
         ) : msg.spoilerLevel > 0 ? (
           <SpoilerGuard lang={lang}>
-            <p className="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
+            <p className="whitespace-pre-wrap break-words" style={{ fontSize: 14, lineHeight: 1.45, fontWeight: 500 }}>{msg.body}</p>
           </SpoilerGuard>
         ) : (
-          <p className="text-sm whitespace-pre-wrap break-words">{msg.body}</p>
+          <p className="whitespace-pre-wrap break-words" style={{ fontSize: 14, lineHeight: 1.45, fontWeight: 500 }}>{msg.body}</p>
         )}
 
         {/* Time + Status */}
-        <div className="flex items-center justify-between mt-2 gap-2">
+        <div className="flex items-center justify-between mt-1 gap-2">
           <span className="text-[10px] text-white/30">
             {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
@@ -452,7 +452,9 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
         if (!up.ok || !up.url) {
           setSendError(
             up.error === 'NOT_SUPPORTED'
-              ? (isRTL ? 'الخادم لا يدعم رفع الملفات بعد — يلزم تفعيل مسار الرفع في الخادم' : 'Server does not support file uploads yet')
+              ? (isRTL ? 'خادم النوادي لا يحتوي مسار رفع الملفات بعد (404) — يلزم تفعيله في الخادم' : 'Club server has no file-upload route yet (404)')
+              : up.error === 'NETWORK'
+              ? (isRTL ? 'تعذّر الاتصال بالخادم (قد يكون الإنترنت ضعيفاً أو CORS غير مفعّل لمسار الرفع)' : 'Could not reach the server (weak network, or CORS not enabled for uploads)')
               : up.error === 'FILE_TOO_LARGE'
               ? (isRTL ? 'الملف أكبر من 100MB' : 'File exceeds 100MB')
               : (isRTL ? `تعذّر رفع الملف (${up.error || 'خطأ'}) — يمكنك إعادة المحاولة` : `Upload failed (${up.error || 'error'}) — you can retry`)
@@ -515,9 +517,20 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
     finally { setSending(false); }
   }, [body, sending, editingPost, attachmentPreview, replyTo, type, spoilerLevel, club._id, isRTL]);
 
+  const shareAttachmentExternally = useCallback(async () => {
+    const f = pendingFileRef.current;
+    if (!f) return;
+    try {
+      const nav: any = navigator;
+      if (nav.canShare && nav.canShare({ files: [f] })) { await nav.share({ files: [f], title: f.name }); return; }
+      showToast(isRTL ? 'المشاركة الخارجية غير مدعومة على هذا الجهاز' : 'External sharing is not supported on this device');
+    } catch { /* ألغى المستخدم */ }
+  }, [isRTL, showToast]);
+
   const handleRetry = useCallback(() => {
+    if (attachmentPreview) { setSendError(null); handleSend(); return; }
     if (pendingBody) { setBody(pendingBody); setPendingBody(null); setSendError(null); }
-  }, [pendingBody]);
+  }, [pendingBody, attachmentPreview, handleSend]);
 
   const handleEdit = useCallback((post: ClubPost) => {
     setEditingPost(post); setBody(post.body || post.content || '');
@@ -893,7 +906,7 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
           {!attachmentPreview && (
             <textarea ref={textareaRef} value={body} onChange={handleBodyChange}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              className="flex-1 bg-gray-900 rounded-xl p-3 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 resize-none max-h-[120px]"
+              className="flex-1 bg-gray-900 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-red-600 resize-none max-h-[120px]" style={{ fontSize: 14, lineHeight: 1.4, fontWeight: 500 }}
               placeholder={editingPost ? (isRTL ? 'عدّل رسالتك...' : 'Edit your message...') : (isRTL ? 'اكتب رسالتك...' : 'Type a message...')}
               rows={1} dir={isRTL ? 'rtl' : 'ltr'} />
           )}
@@ -907,6 +920,9 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
         {sendError && (
           <div className="bg-red-900/50 px-4 py-2 text-red-500 text-xs flex justify-between items-center">
             <span>{sendError}</span>
+            {attachmentPreview && (
+              <button onClick={shareAttachmentExternally} className="underline font-black mx-2 shrink-0">{isRTL ? 'مشاركة عبر تطبيق آخر' : 'Share via another app'}</button>
+            )}
             <button onClick={handleRetry} className="underline uppercase tracking-widest font-black">{isRTL ? 'إعادة المحاولة' : 'Retry'}</button>
           </div>
         )}
