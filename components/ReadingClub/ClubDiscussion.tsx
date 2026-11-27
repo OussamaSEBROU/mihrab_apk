@@ -672,7 +672,7 @@ export default function ClubDiscussion({ lang, club, userProfile, isOwner, isAdm
           {isRTL ? <ArrowRight size={22} /> : <ArrowLeft size={22} />}
         </button>
         <div className="flex-1 text-center mx-2 min-w-0">
-          <h1 className="font-black uppercase tracking-widest text-sm truncate">{club.name}</h1>
+          <h1 className="font-black" style={{ fontSize: 14, lineHeight: 1.35, letterSpacing: 0, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{club.name}</h1>
           {typingUsers.length > 0 && (
             <p className="text-[10px] text-red-500 animate-pulse font-black uppercase tracking-widest truncate">
               {typingUsers.join(', ')} {isRTL ? 'يكتبون...' : 'typing...'}
