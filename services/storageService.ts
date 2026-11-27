@@ -5,6 +5,7 @@ import type { Book, FlashCard, ShelfData, Annotation, HabitData } from '../types
 import { getGMTDateString } from './notificationService';
 import { getDB } from './pdfStorage';
 import { badgeStore } from './badgeStore';
+import { safeSetItem } from './storageGuard';
 
 const STORAGE_KEYS = {
   BOOKS: 'sanctuary_books',
@@ -121,7 +122,7 @@ const attemptBookRecovery = async (): Promise<Book[]> => {
       const recovered: Book[] = JSON.parse(result.data);
       if (Array.isArray(recovered) && recovered.length > 0) {
         // استعادة ناجحة — حفظ في localStorage فوراً
-        localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(recovered));
+        safeSetItem(STORAGE_KEYS.BOOKS, JSON.stringify(recovered));
         console.log(`✅ تم استعادة ${recovered.length} كتاب من النسخة الاحتياطية!`);
         return recovered.map(b => ({
           ...b,
@@ -149,7 +150,7 @@ const attemptShelfRecovery = async (): Promise<ShelfData[]> => {
     if (result.data && typeof result.data === 'string') {
       const recovered: ShelfData[] = JSON.parse(result.data);
       if (Array.isArray(recovered) && recovered.length > 0) {
-        localStorage.setItem(STORAGE_KEYS.SHELVES, JSON.stringify(recovered));
+        safeSetItem(STORAGE_KEYS.SHELVES, JSON.stringify(recovered));
         console.log(`✅ تم استعادة ${recovered.length} رف من النسخة الاحتياطية!`);
         return recovered;
       }
@@ -189,7 +190,7 @@ export const storageService = {
 
   saveShelves: (shelves: ShelfData[]) => {
     _shelvesCache = shelves;
-    localStorage.setItem(STORAGE_KEYS.SHELVES, JSON.stringify(shelves));
+    safeSetItem(STORAGE_KEYS.SHELVES, JSON.stringify(shelves));
     
     // Layer 3: IndexedDB persistence (survives cache clears)
     _persistToIDB(STORAGE_KEYS.SHELVES, shelves).catch(() => {});
@@ -226,7 +227,7 @@ export const storageService = {
     }
     books = books.map(b => badgeStore.stabilize(b));
     _booksCache = books;
-    localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
+    safeSetItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
     
     // Layer 3: IndexedDB persistence (survives cache clears)
     _persistToIDB(STORAGE_KEYS.BOOKS, books).catch(() => {});
@@ -274,7 +275,7 @@ export const storageService = {
       const flush = () => {
         try {
           const books = storageService.getBooks();
-          localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
+          safeSetItem(STORAGE_KEYS.BOOKS, JSON.stringify(books));
           // IndexedDB persistence
           _persistToIDB(STORAGE_KEYS.BOOKS, books).catch(() => {});
           // Filesystem backup for native platforms
@@ -378,7 +379,7 @@ export const storageService = {
   },
 
   saveHabitData: (habit: HabitData) => {
-    localStorage.setItem(STORAGE_KEYS.HABIT, JSON.stringify(habit));
+    safeSetItem(STORAGE_KEYS.HABIT, JSON.stringify(habit));
     
     // Layer 3: IndexedDB persistence (survives cache clears)
     _persistToIDB(STORAGE_KEYS.HABIT, habit).catch(() => {});
@@ -508,7 +509,7 @@ export const storageService = {
 
     // Save to localStorage + IndexedDB
     const key = period === '48h' ? 'sanctuary_analytics_48h' : 'sanctuary_analytics_weekly';
-    localStorage.setItem(key, JSON.stringify(summary));
+    safeSetItem(key, JSON.stringify(summary));
     _persistToIDB(key, summary).catch(() => {});
 
     return summary;
@@ -607,7 +608,7 @@ export const storageService = {
           shelfId: b.shelfId || 'default',
           annotations: b.annotations || []
         }));
-        localStorage.setItem(STORAGE_KEYS.BOOKS, JSON.stringify(recovered));
+        safeSetItem(STORAGE_KEYS.BOOKS, JSON.stringify(recovered));
         _booksCache = recovered;
         booksRecovered = recovered.length;
         console.log(`✅ تم استعادة ${recovered.length} كتاب من IndexedDB!`);
@@ -637,7 +638,7 @@ export const storageService = {
       // Recovery Layer 1: IndexedDB
       const idbShelves = await _readFromIDB<ShelfData[]>(STORAGE_KEYS.SHELVES);
       if (Array.isArray(idbShelves) && idbShelves.length > 0) {
-        localStorage.setItem(STORAGE_KEYS.SHELVES, JSON.stringify(idbShelves));
+        safeSetItem(STORAGE_KEYS.SHELVES, JSON.stringify(idbShelves));
         _shelvesCache = idbShelves;
         shelvesRecovered = idbShelves.length;
         console.log(`✅ تم استعادة ${idbShelves.length} رف من IndexedDB!`);
@@ -663,7 +664,7 @@ export const storageService = {
       // Try IndexedDB first
       const idbHabit = await _readFromIDB<HabitData>(STORAGE_KEYS.HABIT);
       if (idbHabit && idbHabit.history) {
-        localStorage.setItem(STORAGE_KEYS.HABIT, JSON.stringify(idbHabit));
+        safeSetItem(STORAGE_KEYS.HABIT, JSON.stringify(idbHabit));
         console.log('✅ تم استعادة بيانات العادات من IndexedDB!');
       } else {
         // Try filesystem
@@ -677,7 +678,7 @@ export const storageService = {
             if (result.data && typeof result.data === 'string') {
               const recovered = JSON.parse(result.data);
               if (recovered && recovered.history) {
-                localStorage.setItem(STORAGE_KEYS.HABIT, JSON.stringify(recovered));
+                safeSetItem(STORAGE_KEYS.HABIT, JSON.stringify(recovered));
                 _persistToIDB(STORAGE_KEYS.HABIT, recovered).catch(() => {});
                 console.log('✅ تم استعادة بيانات العادات من النسخة الاحتياطية!');
               }
