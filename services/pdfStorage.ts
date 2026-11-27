@@ -1,4 +1,5 @@
 import type { Book, FlashCard, ShelfData, Annotation, HabitData } from '../types';
+import { isQuotaError, reportStorageFull } from './storageGuard';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 
@@ -238,7 +239,7 @@ const _backupPdfToFilesystem = (id: string, data: ArrayBuffer): void => {
     data: _arrayBufferToBase64(data),
     directory: Directory.Data,
     recursive: true
-  }).catch(() => {});
+  }).catch((e) => { if (isQuotaError(e)) reportStorageFull({ context: 'backup' }); });
 };
 
 const _recoverPdfFromFilesystem = async (id: string): Promise<ArrayBuffer | null> => {
@@ -281,6 +282,7 @@ export const pdfStorage = {
         res();
       };
       tx.onerror = () => rej(tx.error);
+      tx.onabort = () => rej(tx.error || new DOMException('Quota exceeded', 'QuotaExceededError'));
     });
   },
 
@@ -342,6 +344,7 @@ export const pdfStorage = {
       tx.objectStore('Covers').put(dataUrl, id);
       tx.oncomplete = () => res();
       tx.onerror = () => rej(tx.error);
+      tx.onabort = () => rej(tx.error || new DOMException('Quota exceeded', 'QuotaExceededError'));
     });
   },
 
