@@ -4,7 +4,7 @@ import { motion, AnimatePresence, useMotionValue } from 'framer-motion';
 import { Language } from '../types';
 import type { Book } from '../types';
 import { translations } from '../i18n/translations';
-import { Upload, Trash2, Share2, Trophy } from 'lucide-react';
+import { Upload, Trash2, Share2, Trophy, Pencil } from 'lucide-react';
 import { pdfStorage } from '../services/pdfStorage';
 
 const MotionDiv = motion.div as any;
@@ -17,6 +17,7 @@ interface ShelfProps {
   onSelectBook: (book: Book) => void;
   onAddBook: () => void;
   onDeleteBook: (book: Book) => void;
+  onEditBook?: (book: Book) => void;
   onExportBook?: (book: Book) => void;
   onChallengeBook?: (book: Book) => void;
   onAddShelf?: () => void;
@@ -26,7 +27,7 @@ interface ShelfProps {
 // Cover image cache — in-memory for instant display
 const coverCache = new Map<string, string>();
 
-export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeIndex, onActiveIndexChange, onSelectBook, onAddBook, onDeleteBook, onExportBook, onChallengeBook, onShelfSwipe }) => {
+export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeIndex, onActiveIndexChange, onSelectBook, onAddBook, onDeleteBook, onEditBook, onExportBook, onChallengeBook, onShelfSwipe }) => {
   const t = (translations as any)[lang];
   const dragX = useMotionValue(0);
   const [dragOffset, setDragOffset] = useState(0);
@@ -311,6 +312,17 @@ export const Shelf: React.FC<ShelfProps> = React.memo(({ books, lang, activeInde
                     </div>
                   )}
                   
+                  {/* Edit title button */}
+                  {isCenter && onEditBook && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onEditBook(book); }}
+                      aria-label={lang === 'ar' ? 'تعديل اسم الكتاب' : 'Rename book'}
+                      className="absolute top-3 left-4 p-2 rounded-full bg-black/60 backdrop-blur-sm text-white/50 hover:text-amber-400 hover:bg-black/80 transition-all shadow-lg btn-press z-20 border border-white/10"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
+
                   {/* Delete button */}
                   {isCenter && (
                     <button
