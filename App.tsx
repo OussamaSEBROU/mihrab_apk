@@ -25,6 +25,7 @@ import ChallengeModal from './components/ChallengeModal';
 import BookSearch from './components/BookSearch';
 import StorageFullDialog from './components/StorageFullDialog';
 import RenameDialog from './components/RenameDialog';
+import { findNameDuplicate } from './services/bookNames';
 import { ensureSpace, isQuotaError, reportStorageFull, installGlobalStorageGuard } from './services/storageGuard';
 import {
   Menu, X, Plus, Clock, Star, BookOpen, Trash2, Globe, LayoutDashboard, Library,
@@ -200,7 +201,7 @@ const App: React.FC = () => {
   const [showInsights, setShowInsights] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
-  const [renameTarget, setRenameTarget] = useState<{ kind: 'book' | 'shelf'; id: string; value: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ kind: 'book' | 'shelf'; id: string; value: string; author?: string } | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [showChallengeModal, setShowChallengeModal] = useState(false);
   const [challengeBook, setChallengeBook] = useState<Book | null>(null);
@@ -538,6 +539,8 @@ const App: React.FC = () => {
       }
       return;
     }
+    // ── منع تكرار الكتاب بالاسم والمؤلف نفسيهما ──
+    if (findNameDuplicate(books, newBookTitle, newBookAuthor)) { alert(dupMessage()); return; }
     // ── فحص استباقي للمساحة: PDF في IndexedDB + نسخة احتياطية في الملفات (≈ ضعف الحجم) ──
     if (!(await ensureSpace(pendingFileData.byteLength * 2, 'add-book', () => { handleAddBook(); }))) return;
     setIsExtracting(true);
@@ -590,12 +593,20 @@ const App: React.FC = () => {
       setIsExtracting(false);
     }
   };
-  const applyBookRename = (id: string, title: string) => {
+  const dupMessage = () => lang === 'ar'
+    ? 'يوجد كتاب بنفس الاسم والمؤلف في مكتبتك — غيّر الاسم أو المؤلف.'
+    : 'A book with the same title and author already exists in your library.';
+  const applyBookRename = (id: string, title: string, author?: string): boolean => {
     const t = (title || '').trim();
-    if (!t) return;
-    const updated = books.map(b => b.id === id ? { ...b, title: t } : b);
+    if (!t) return false;
+    const cur = books.find(b => b.id === id);
+    if (!cur) return false;
+    const a = author === undefined ? (cur.author || '') : author.trim();
+    if (findNameDuplicate(books, t, a, id)) return false;
+    const updated = books.map(b => b.id === id ? { ...b, title: t, author: a } : b);
     setBooks(updated);
     storageService.saveBooks(updated);
+    return true;
   };
   const applyShelfRename = (id: string, name: string) => {
     const n = (name || '').trim();
@@ -605,10 +616,12 @@ const App: React.FC = () => {
     storageService.saveShelves(updated);
   };
   // إعادة التسمية القادمة من صفحة النادي (تنبيه «سمِّ كتابك باسم المالك»)
-  const renameFromClubRef = useRef<(id: string, title: string) => void>(() => {});
-  renameFromClubRef.current = applyBookRename;
+  const renameFromClubRef = useRef<(id: string, title: string) => boolean>(() => false);
+  renameFromClubRef.current = (id, title) => applyBookRename(id, title);
+  const dupMsgRef = useRef<() => string>(() => '');
+  dupMsgRef.current = dupMessage;
   useEffect(() => {
-    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (d?.id && d?.title) renameFromClubRef.current(d.id, d.title); };
+    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (d?.id && d?.title) { if (!renameFromClubRef.current(d.id, d.title)) alert(dupMsgRef.current()); } };
     window.addEventListener('mihrab:rename-book', h);
     return () => window.removeEventListener('mihrab:rename-book', h);
   }, []);
@@ -1145,7 +1158,7 @@ const App: React.FC = () => {
                           onAddBook={() => setIsAddingBook(true)} 
                           onAddShelf={() => setIsAddingShelf(true)}
                           onDeleteBook={(b: Book) => setBookToDelete(b)}
-                          onEditBook={(b: Book) => setRenameTarget({ kind: 'book', id: b.id, value: b.title })}
+                          onEditBook={(b: Book) => setRenameTarget({ kind: 'book', id: b.id, value: b.title, author: b.author || '' })}
                           onExportBook={handleExportBook}
                           onChallengeBook={(b: Book) => { setChallengeBook(b); setShowChallengeModal(true); }}
                           onShelfSwipe={handleShelfSwipe}
@@ -1658,10 +1671,13 @@ const App: React.FC = () => {
           {renameTarget && (
             <RenameDialog
               lang={lang as any}
-              heading={renameTarget.kind === 'book' ? (lang === 'ar' ? 'تعديل اسم الكتاب' : 'Rename book') : (lang === 'ar' ? 'تعديل اسم الرف' : 'Rename shelf')}
+              heading={renameTarget.kind === 'book' ? (lang === 'ar' ? 'تعديل الكتاب (الاسم والكاتب)' : 'Edit book (title & author)') : (lang === 'ar' ? 'تعديل اسم الرف' : 'Rename shelf')}
               initial={renameTarget.value}
+              secondaryLabel={renameTarget.kind === 'book' ? (lang === 'ar' ? 'اسم الكاتب' : 'Author') : undefined}
+              secondaryInitial={renameTarget.author || ''}
+              validate={renameTarget.kind === 'book' ? ((v, s) => findNameDuplicate(books, v, s, renameTarget.id) ? dupMessage() : null) : undefined}
               onClose={() => setRenameTarget(null)}
-              onSave={(v) => { if (renameTarget.kind === 'book') applyBookRename(renameTarget.id, v); else applyShelfRename(renameTarget.id, v); setRenameTarget(null); }}
+              onSave={(v, s) => { if (renameTarget.kind === 'book') applyBookRename(renameTarget.id, v, s); else applyShelfRename(renameTarget.id, v); setRenameTarget(null); }}
             />
           )}
           {celebrationStar && <CelebrationOverlay starCount={celebrationStar} lang={lang} onComplete={handleCelebrationComplete} />}
