@@ -5,10 +5,10 @@
 // ══════════════════════════════════════════════════════════════
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { BookOpen, Plus, Trash2, Trophy, Loader2, ChevronDown, X, LogIn, LogOut, ExternalLink } from 'lucide-react';
+import { BookOpen, Plus, Pencil, Trash2, Trophy, Loader2, ChevronDown, X, LogIn, LogOut, ExternalLink } from 'lucide-react';
 import type { ReadingClub } from '../../types/readingClub';
 import type { ClubBookEntry, ChallengeParticipant } from '../../types/challenge';
-import { challengeService, titleMatches } from '../../services/challengeService';
+import { challengeService, titleMatches, entryMatches, makeBookKey } from '../../services/challengeService';
 
 interface Props {
   lang: 'ar' | 'en';
@@ -43,17 +43,29 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
       if (canManage) await challengeService.registerCurrentBook(club._id, club).catch(() => {});
       const list = await challengeService.getClubBooks(club._id, club);
       setEntries(list);
+      // المشرف: نُلحق بصمة محتوى كتبه المسجَّلة بلا بصمة ليتعرّف الأعضاء على الكتاب مهما اختلف اسم نسختهم
+      if (canManage) {
+        const ups = list
+          .filter(e => !e.hash)
+          .map(e => { const lb = (books || []).find((x: any) => x?.contentHash && x.title && titleMatches(x.title, e.title)); return lb ? { key: e.key, hash: lb.contentHash as string } : null; })
+          .filter(Boolean) as { key: string; hash: string }[];
+        if (ups.length) challengeService.setClubBookHashes(club._id, ups).then(() => challengeService.getClubBooks(club._id, club)).then(setEntries).catch(() => {});
+      }
       if (list.length) setBoards(await challengeService.fetchClubBoards(club._id, list.map(b => b.key)));
       setMine(challengeService.getMyClubParticipation(club._id));
     } finally { setLoading(false); }
-  }, [club, canManage]);
+  }, [club, canManage, books]);
 
   useEffect(() => { if (!isChallengeGroup) load(); else setLoading(false); }, [load, isChallengeGroup]);
 
   if (isChallengeGroup) return null;
 
   const library = (books || []).filter(b => b && b.title);
-  const findLibraryBook = (e: ClubBookEntry) => library.find(b => titleMatches(b.title, e.title));
+  const findLibraryBook = (e: ClubBookEntry) => library.find(b => entryMatches(e, b.title, b.contentHash));
+  const renameToOwner = (lib: any, e: ClubBookEntry) => {
+    try { window.dispatchEvent(new CustomEvent('mihrab:rename-book', { detail: { id: lib.id, title: e.title } })); } catch { /* noop */ }
+    flash(isRTL ? 'تمت إعادة تسمية كتابك' : 'Book renamed');
+  };
   const participation = (e: ClubBookEntry) => mine.find(m => m.bookKey === e.key);
   const flash = (m: string) => { setNote(m); setTimeout(() => setNote(''), 3500); };
 
@@ -61,7 +73,8 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
     if (!title.trim()) return;
     setBusy(true);
     try {
-      await challengeService.addClubBook(club._id, title, author);
+      const picked = library.find(x => x.title === title.trim() || x.title === title);
+      await challengeService.addClubBook(club._id, title, author, picked?.contentHash);
       setEntries(await challengeService.getClubBooks(club._id, club));
       setTitle(''); setAuthor(''); setAdding(false);
     } finally { setBusy(false); }
@@ -239,6 +252,19 @@ export default function ClubBooksSection({ lang, club, canManage, books, onOpenB
                     )
                   )}
                 </div>
+                {lib && makeBookKey(lib.title) !== b.key && (
+                  <div className="flex items-center gap-2 px-3 py-2 border-t border-amber-600/20 bg-amber-600/10">
+                    <span className="flex-1 min-w-0 text-[10px] font-bold text-amber-300 leading-relaxed">
+                      {isRTL
+                        ? `تم التعرّف على كتابك لكنه مسمّى «${lib.title}» بينما اسمه عند المالك «${b.title}». سمِّه بالاسم نفسه لتجنّب اللبس.`
+                        : `Your copy is recognised but named “${lib.title}”, the owner calls it “${b.title}”. Rename it to match.`}
+                    </span>
+                    <button onClick={() => renameToOwner(lib, b)}
+                      className="shrink-0 h-8 px-3 rounded-lg bg-amber-600/25 border border-amber-500/40 text-amber-300 text-[10px] font-black flex items-center gap-1.5 whitespace-nowrap">
+                      <Pencil size={11} />{isRTL ? 'إعادة التسمية' : 'Rename'}
+                    </button>
+                  </div>
+                )}
                 {isOpen && (
                   <div className="border-t border-white/5 px-3 py-2 space-y-1.5">
                     {list.length === 0 ? (
