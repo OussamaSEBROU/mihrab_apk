@@ -82,7 +82,7 @@ export const ClubCreate: React.FC<ClubCreateProps> = ({ lang, books, userProfile
         if (groupId && bookIds.length) {
           for (const id of bookIds) {
             const b = findBook(id);
-            if (b?.title) { try { await challengeService.addClubBook(groupId, b.title, b.author || ''); } catch {} }
+            if (b?.title) { try { await challengeService.addClubBook(groupId, b.title, b.author || '', (b as any).contentHash); } catch {} }
           }
         }
         onCreated(response.data.group as any);
