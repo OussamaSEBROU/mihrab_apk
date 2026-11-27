@@ -164,26 +164,26 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
               {/* Ambient glow */}
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-24 bg-amber-500/10 blur-[60px] rounded-full pointer-events-none" />
 
-              <div className="relative flex items-center justify-between">
-                <div className="flex items-center gap-3">
+              <div className="relative flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500/30 to-amber-700/20 border border-amber-500/30 flex items-center justify-center shadow-[0_0_20px_rgba(245,158,11,0.2)]">
                     <Trophy size={20} className="text-amber-400" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <h2 className="text-base font-black text-white uppercase tracking-tight">
                       {isRTL ? 'لوحة الصدارة' : 'Leaderboard'}
                     </h2>
                     {challenge.clubName ? (
                       <>
-                        <p className="text-[11px] font-black text-amber-400 mt-0.5 max-w-[190px] truncate">
+                        <p className="text-[11px] font-black text-amber-400 mt-0.5" style={{ lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
                           {challenge.clubName}
                         </p>
-                        <p className="text-[9px] font-bold text-amber-500/50 mt-0.5 max-w-[190px] truncate">
+                        <p className="text-[9px] font-bold text-amber-500/50 mt-0.5" style={{ lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
                           {challenge.bookTitle}
                         </p>
                       </>
                     ) : (
-                      <p className="text-[9px] font-bold text-amber-500/60 uppercase tracking-[0.2em] mt-0.5">
+                      <p className="text-[9px] font-bold text-amber-500/60 mt-0.5" style={{ letterSpacing: isRTL ? 0 : '0.2em', lineHeight: 1.35, wordBreak: 'break-word' }}>
                         {challenge.bookTitle}
                       </p>
                     )}
