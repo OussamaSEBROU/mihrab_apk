@@ -7,6 +7,7 @@ import { readingClubAuth } from './readingClubAuth';
 import { clubGroupsAPI, clubInvitesAPI, clubMembersAPI, clubMessagesAPI } from './readingClubAPI';
 import { readingClubSync } from './readingClubSync';
 import { clubInviteCode } from './clubInviteCode';
+import { storageService } from './storageService';
 import type { ReadingClub } from '../types/readingClub';
 import type {
   ClubBookEntry, ClubBooksSnapshotMessage,
@@ -138,9 +139,16 @@ export const titleMatches = (a: string, b: string): boolean => {
  * • للطرفين بصمة: تُحسم بالبصمة فقط (تساويا = نفس الكتاب مهما اختلف الاسم، اختلفا = كتابان مختلفان حتى لو تشابه الاسم)
  * • غابت البصمة عن أحدهما (كتب قديمة): نرجع إلى مطابقة الاسم
  */
+export const libraryTitleCount = (title: string): number => {
+  try { return storageService.getBooks().filter(b => titleMatches(b.title, title)).length; } catch { return 1; }
+};
+
 export const entryMatches = (entry: { title: string; hash?: string }, title: string, hash?: string): boolean => {
   if (hash && entry.hash) return hash === entry.hash;
-  return titleMatches(entry.title, title);
+  if (!titleMatches(entry.title, title)) return false;
+  // مدخل قديم بلا بصمة: إن كان في مكتبتي أكثر من كتاب بالاسم نفسه فلا نخمّن أيّها هو
+  if (!entry.hash && libraryTitleCount(entry.title) > 1) return false;
+  return true;
 };
 
 const isChallengeGroup = (g: { description?: string } | null | undefined) =>
@@ -338,8 +346,8 @@ function buildClubChallenge(
     id: club._id,
     pin: token ? generatePinFromToken(token) : '',
     bookId,
-    bookTitle: bookTitle || entry.title,
-    bookAuthor: bookAuthor || entry.author,
+    bookTitle: entry.title || bookTitle,           // اسم الكتاب كما هو مسجَّل في النادي (يمنع اللبس بين كتابين متشابهين)
+    bookAuthor: entry.author || bookAuthor,
     creatorName: isOwner ? identity.name : '',
     creatorCountry: isOwner ? identity.country : '',
     createdAt: Date.now(),
@@ -887,26 +895,43 @@ export const challengeService = {
     withCurrentBook(readBooksCache(clubId).books, club),
   fetchClubBoards: (clubId: string, keys: string[]) => fetchClubBoards(clubId, keys),
 
-  addClubBook: async (clubId: string, title: string, author: string, hash?: string): Promise<ClubBookEntry[]> => {
+  /**
+   * تسجيل كتاب في النادي مع منع التداخل:
+   * • الملف نفسه (بصمة) مسجَّل سابقاً ⇒ يُعاد المدخل نفسه مهما كان الاسم
+   * • اسم مطابق لكتاب مسجَّل لكنه ملف مختلف ⇒ يُسجَّل كتاباً مستقلاً باسم «العنوان (2)» ومفتاح مختلف
+   * • مدخل قديم بلا بصمة وكتاب واحد بهذا الاسم في المكتبة ⇒ يُعدّ نفسه وتُلحق به البصمة
+   */
+  ensureClubBook: async (clubId: string, title: string, author: string, hash?: string): Promise<{ books: ClubBookEntry[]; entry: ClubBookEntry | null }> => {
     const books = await fetchClubBooks(clubId);
-    const key = makeBookKey(title);
-    if (!title.trim()) return books;
+    const t = (title || '').trim();
+    if (!t) return { books, entry: null };
+    if (hash) {
+      const same = books.find(b => b.hash === hash);
+      if (same) return { books, entry: same };
+    }
+    let useTitle = t;
+    let key = makeBookKey(useTitle);
     const existing = books.find(b => b.key === key);
     if (existing) {
-      // مسجَّل باسمه: نُلحق البصمة إن كانت ناقصة
-      if (hash && !existing.hash) {
+      if (!hash) return { books, entry: existing };
+      if (!existing.hash && libraryTitleCount(existing.title) <= 1) {
         const next = books.map(b => b.key === key ? { ...b, hash } : b);
         await postBooksSnapshot(clubId, next);
-        return next;
+        return { books: next, entry: next.find(b => b.key === key)! };
       }
-      return books;
+      let n = 2;
+      while (books.some(b => b.key === makeBookKey(`${t} (${n})`))) n++;
+      useTitle = `${t} (${n})`;
+      key = makeBookKey(useTitle);
     }
-    // الملف نفسه مسجَّل مسبقاً باسم آخر: لا نكرّره
-    if (hash && books.some(b => b.hash === hash)) return books;
-    const next = [...books, { key, title: title.trim(), author: (author || '').trim(), ...(hash ? { hash } : {}) }];
+    const entry: ClubBookEntry = { key, title: useTitle, author: (author || '').trim(), ...(hash ? { hash } : {}) };
+    const next = [...books, entry];
     await postBooksSnapshot(clubId, next);
-    return next;
+    return { books: next, entry };
   },
+
+  addClubBook: async (clubId: string, title: string, author: string, hash?: string): Promise<ClubBookEntry[]> =>
+    (await challengeService.ensureClubBook(clubId, title, author, hash)).books,
 
   /** إلحاق بصمات المحتوى بكتب مسجَّلة بلا بصمة (للمشرفين، من مكتبتهم) */
   setClubBookHashes: async (clubId: string, updates: { key: string; hash: string }[]): Promise<void> => {
@@ -934,7 +959,7 @@ export const challengeService = {
     const lists = await Promise.all(clubs.map(async c => ({ ...c, books: withCurrentBook(await fetchClubBooks(c.club._id), c.club) })));
     const out: { club: ReadingClub; canManage: boolean; entry: ClubBookEntry }[] = [];
     for (const c of lists) {
-      const hit = c.books.find(b => entryMatches(b, bookTitle, contentHash));
+      const hit = (contentHash ? c.books.find(b => b.hash === contentHash) : undefined) || c.books.find(b => entryMatches(b, bookTitle, contentHash));
       if (hit) out.push({ club: c.club, canManage: c.canManage, entry: hit });
     }
     return { clubs: lists, matches: out };
@@ -960,8 +985,7 @@ export const challengeService = {
       const token = await clubInviteCode.ensure(club._id, club);
       if (!token) return { success: false, error: 'Failed to read club invite code' };
 
-      const books = await challengeService.addClubBook(club._id, bookTitle, bookAuthor, contentHash);
-      const entry = books.find(b => b.key === makeBookKey(bookTitle) || (!!contentHash && b.hash === contentHash));
+      const { entry } = await challengeService.ensureClubBook(club._id, bookTitle, bookAuthor, contentHash);
       if (!entry) return { success: false, error: 'Failed to register book in club' };
 
       saveIdentity(identity);
