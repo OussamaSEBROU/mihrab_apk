@@ -3,11 +3,12 @@
 // Professional glassmorphism leaderboard inside the Reader
 // ══════════════════════════════════════════════════════════════
 
+import { clubInviteCode } from '../services/clubInviteCode';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Clock, BookOpen, X,
-  Loader2, LogOut, Star, Users, Target, Flame
+  Loader2, LogOut, Star, Users, Target, Flame, Link2, Check
 } from 'lucide-react';
 import type { Language } from '../types';
 import { challengeService } from '../services/challengeService';
@@ -86,6 +87,37 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [isOpen, challengeId, bookId, fetchData]);
+
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [linkErr, setLinkErr] = useState(false);
+
+  const handleCopyLink = useCallback(async () => {
+    if (linkBusy || !challenge) return;
+    setLinkBusy(true); setLinkErr(false);
+    try {
+      // الرمز الموحَّد للنادي؛ إن لم يكن محفوظاً محلياً يُجلب/يُنشأ هنا (لا يظهر فارغاً بعد الآن)
+      const token = (await clubInviteCode.ensure(challenge.id)) || challenge.inviteToken || challenge.pin;
+      if (!token) { setLinkErr(true); return; }
+      const link = clubInviteCode.link(token);
+      let copied = false;
+      try { await navigator.clipboard.writeText(link); copied = true; } catch {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = link; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          copied = document.execCommand('copy'); document.body.removeChild(ta);
+        } catch { /* noop */ }
+      }
+      if (copied) { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); }
+      try {
+        if ((navigator as any).share) {
+          await (navigator as any).share({ title: challenge.clubName || challenge.bookTitle || 'المحراب', text: isRTL ? 'انضم إلى منافستنا في المحراب' : 'Join our reading competition on Mihrab', url: link });
+        }
+      } catch { /* المستخدم ألغى المشاركة */ }
+      if (!copied && !(navigator as any).share) setLinkErr(true);
+    } finally { setLinkBusy(false); }
+  }, [challenge, linkBusy, isRTL]);
 
   const handleLeave = useCallback(async () => {
     const msg = isRTL
@@ -319,18 +351,24 @@ export default function ChallengeLeaderboard({ bookId, lang, isOpen, onToggle }:
             {/* ═══ FOOTER ═══ */}
             <div className="px-5 py-4 border-t border-white/5 bg-black/30">
               <div className="flex items-center justify-between gap-3">
-                {/* PIN display — يلتف على سطرين بدل دفع زر المغادرة خارج البطاقة */}
-                <div className="flex flex-col gap-1 min-w-0 flex-1">
-                  <span className="text-[8px] font-black text-white/25 uppercase tracking-widest">
-                    {isRTL ? 'رمز المنافسة:' : 'Code:'}
-                  </span>
-                  <span
-                    dir="ltr"
-                    className="text-[10px] font-mono font-black text-amber-500/60 tracking-[0.08em] select-all leading-snug"
-                    style={{ wordBreak: 'break-all', textAlign: isRTL ? 'right' : 'left' }}
+                {/* Copy link — بدل عرض الرمز مكتوباً: نسخ الرابط ثم عرض المشاركة */}
+                <div className="flex flex-col gap-1 min-w-0 flex-1 items-start">
+                  <button
+                    onClick={handleCopyLink}
+                    disabled={linkBusy}
+                    aria-label="Copy link"
+                    className="flex items-center gap-2 px-4 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 transition-all active:scale-95 disabled:opacity-60 whitespace-nowrap"
                   >
-                    {challenge.inviteToken || challenge.pin}
-                  </span>
+                    {linkBusy ? <Loader2 size={13} className="animate-spin" /> : linkCopied ? <Check size={13} /> : <Link2 size={13} />}
+                    <span dir="ltr" className="text-[11px] font-black tracking-wide">
+                      {linkCopied ? (isRTL ? 'تم النسخ ✓' : 'Copied ✓') : 'Copy link'}
+                    </span>
+                  </button>
+                  {linkErr && (
+                    <span className="text-[9px] font-bold text-red-400">
+                      {isRTL ? 'تعذّر الحصول على الرابط — تحقق من الاتصال' : 'Could not get the link — check your connection'}
+                    </span>
+                  )}
                 </div>
 
                 {/* Leave button — حجم ثابت لا يُضغط ولا يُقصّ */}
