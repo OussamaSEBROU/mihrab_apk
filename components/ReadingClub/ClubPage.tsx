@@ -5,7 +5,7 @@ import { ReadingClub, ClubUserProfile, ClubView } from '../../types/readingClub'
 import { clubInvitesAPI, clubMembersAPI } from '../../services/readingClubAPI';
 import ConfirmDialog from './shared/ConfirmDialog';
 import ClubBooksSection from './ClubBooksSection';
-import { titleMatches } from '../../services/challengeService';
+import { titleMatches, challengeService } from '../../services/challengeService';
 import { clubInviteCode } from '../../services/clubInviteCode';
 
 const MotionDiv = motion.div as any;
@@ -82,9 +82,12 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
   const handleOpenBook = () => {
     if (!books || !onOpenReader) return;
     // نطابق بالمعرّف ثم بالعنوان (معرّف الملف يختلف من جهاز لآخر)
+    const curEntry = challengeService.getCachedClubBooks(club._id, club).find(e => club.currentBookTitle && titleMatches(e.title, club.currentBookTitle));
+    const byTitle = books.filter(b => club.currentBookTitle && titleMatches(b.title, club.currentBookTitle));
     const book =
       books.find(b => club.currentBookId && (b.id === club.currentBookId || b._id === club.currentBookId)) ||
-      books.find(b => club.currentBookTitle && titleMatches(b.title, club.currentBookTitle));
+      // لمدخل له بصمة: نطابق بها فقط؛ وإلا بالاسم إن كان مرشّحاً وحيداً (لا نخمّن بين كتابين متشابهين)
+      (curEntry?.hash ? books.find(b => b.contentHash === curEntry.hash) : (byTitle.length === 1 ? byTitle[0] : undefined));
     if (book) { setBookMissing(false); onOpenReader(book); }
     else { setBookMissing(true); setTimeout(() => setBookMissing(false), 3500); }
   };
@@ -92,15 +95,15 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
   return (
     <div className="w-full h-full bg-[#000a00] text-white flex flex-col relative" dir={isRTL ? 'rtl' : 'ltr'}>
       <div className="p-4 flex items-center justify-between border-b border-white/5 bg-black/40 backdrop-blur-md sticky top-0 z-10">
-        <div className="flex items-center gap-3 flex-1">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
           <button 
             onClick={onBack}
             className="p-2 rounded-full hover:bg-white/5 transition-colors"
           >
             <ArrowLeft className={`w-6 h-6 ${isRTL ? 'rotate-180' : ''}`} />
           </button>
-          <div className="flex-1 truncate">
-            <h1 className="text-lg font-black uppercase tracking-widest text-red-500 truncate">
+          <div className="flex-1 min-w-0">
+            <h1 className="font-black text-red-500" style={{ fontSize: 15, lineHeight: 1.35, letterSpacing: 0, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
               {club.name}
             </h1>
             <p className="text-xs text-gray-400 uppercase tracking-wider">
@@ -130,7 +133,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({ lang, club, userProfile, onB
           <div className="w-20 h-20 bg-red-900/20 border border-red-500/30 rounded-full flex items-center justify-center mx-auto mb-4">
             <Users className="w-10 h-10 text-red-500" />
           </div>
-          <h2 className="text-2xl font-black uppercase tracking-widest mb-2">{club.name}</h2>
+          <h2 className="font-black mb-2 px-2" style={{ fontSize: 20, lineHeight: 1.4, letterSpacing: 0, wordBreak: 'break-word' }}>{club.name}</h2>
           {club.description && (
             <p className="text-sm text-gray-400 max-w-sm mx-auto">{club.description}</p>
           )}
