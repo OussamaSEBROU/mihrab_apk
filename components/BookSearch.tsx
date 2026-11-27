@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════════
 // BOOK SEARCH — بحث سريع عن كتاب بالاسم في واجهة المحراب الأساسية
-// زر صغير بحجم أزرار الشريط العلوي نفسه (لا يمسّ هوية الكتب)، وعند الاختيار ينتقل الرف إلى الكتاب مباشرة.
+// أيقونة صغيرة شفافة بلا إطار تذوب في الشريط العلوي (لا تمسّ هوية الواجهة)، وعند الاختيار ينتقل الرف إلى الكتاب مباشرة.
 // ══════════════════════════════════════════════════════════════
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -53,9 +53,10 @@ const BookSearch: React.FC<Props> = ({ lang, books, shelves, onGoToBook, onHapti
       <button
         onClick={() => { setOpen(true); onHaptic?.(); }}
         aria-label={isRTL ? 'بحث عن كتاب' : 'Search books'}
-        className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center bg-black/60 backdrop-blur-xl border border-white/[0.08] rounded-xl text-white/60 hover:text-white hover:bg-red-600/90 transition-all active:scale-90"
+        className="w-7 h-7 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-all active:scale-90"
+        style={{ background: 'transparent' }}
       >
-        <Search size={16} />
+        <Search size={14} strokeWidth={2.2} />
       </button>
 
       {open && (
