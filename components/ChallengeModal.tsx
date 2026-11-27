@@ -86,7 +86,7 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
 
   useEffect(() => {
     let alive = true;
-    challengeService.getClubCompetitionsForBook(book.title).then(r => {
+    challengeService.getClubCompetitionsForBook(book.title, (book as any).contentHash).then(r => {
       if (!alive) return;
       setMyClubs(r.clubs.map(c => ({ club: c.club, canManage: c.canManage })));
       setMatches(r.matches);
@@ -103,11 +103,11 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
 
     const identity: ChallengeIdentity = { name: name.trim(), country };
 
-    // داخل نادٍ: الكتاب يُسجّل في سجل النادي ويُستعمل رمز دعوة النادي نفسه
+    // داخل نادٍ: الكتاب يُسجَّل في سجل النادي ويُستعمل رمز دعوة النادي نفسه
     if (targetClubId) {
       const target = myClubs.find(c => c.club._id === targetClubId);
       if (target) {
-        const r = await challengeService.createChallengeInClub(identity, target.club, book.id, book.title, book.author);
+        const r = await challengeService.createChallengeInClub(identity, target.club, book.id, book.title, book.author, (book as any).contentHash);
         setIsLoading(false);
         if (r.success && r.code) { setGeneratedPin(r.code); setMode('success'); }
         else setError(r.error || (isRTL ? 'فشل إنشاء المنافسة' : 'Failed to create challenge'));
@@ -134,7 +134,7 @@ export default function ChallengeModal({ lang, book, onClose, onChallengeReady }
     setError('');
 
     const identity: ChallengeIdentity = { name: name.trim(), country };
-    const result = await challengeService.joinChallenge(identity, pin.trim(), book.id, { title: book.title, author: book.author });
+    const result = await challengeService.joinChallenge(identity, pin.trim(), book.id, { title: book.title, author: book.author, contentHash: (book as any).contentHash });
 
     setIsLoading(false);
     if (result.success) {
